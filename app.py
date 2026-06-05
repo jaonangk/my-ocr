@@ -1,6 +1,10 @@
 import cv2
+import io
+import re
+import tempfile
+import os
 import streamlit as st
-import streamlit.components.v1 as components 
+import streamlit.components.v1 as components
 
 # =========================================================
 # PAGE CONFIG
@@ -23,6 +27,12 @@ from ocr_engine import (
 from cropper_ui import st_cropper
 import numpy as np
 
+try:
+    import fpdf
+    HAS_FPDF = True
+except ImportError:
+    HAS_FPDF = False
+
 # =========================================================
 # GLOBAL NATIVE CSS DESIGN
 # =========================================================
@@ -38,21 +48,6 @@ header, footer, #MainMenu,
 .stApp { background-color: #FFF2F6 !important; }
 .block-container { max-width:100% !important; padding:1.5rem 3rem !important; }
 
-.header-bar {
-    display:flex; justify-content:space-between; align-items:center;
-    padding:14px 28px; margin-bottom:40px;
-    background:#FFFFFF; border-radius:18px;
-    box-shadow:0 4px 15px rgba(74,46,53,0.02);
-}
-.logo-text {
-    color:#4A2E35; font-size:20px; font-weight:700;
-    display:flex; align-items:center; gap:8px;
-}
-.lang-pill {
-    background:#C97D98; color:white;
-    padding:7px 16px; border-radius:10px;
-    font-size:13px; font-weight:500;
-}
 .hero-title {
     text-align:center; color:#4A2E35;
     font-size:32px; font-weight:500; margin:35px 0 10px;
@@ -82,7 +77,7 @@ header, footer, #MainMenu,
 [data-testid="stFileUploaderDropzoneInstructions"] > div > small { display:none !important; }
 [data-testid="stFileUploaderDropzoneInstructions"] {
     display:flex !important; flex-direction:column !important;
-    align-items:center holiday;
+    align-items:center;
 }
 [data-testid="stFileUploaderDropzoneInstructions"]::before {
     content:"📄"; font-size:44px; line-height:1;
@@ -137,8 +132,6 @@ def safe_int(value, default=1):
     except Exception:
         return default
 
-import re
-
 def normalize_date(date_str):
     if not date_str: return None
     date_str = str(date_str).strip()
@@ -165,28 +158,13 @@ def normalize_date(date_str):
         return date_str
 
 # =========================================================
+# SVG ICONS
 # =========================================================
-# (Removed fragile JS message tunnel as it's no longer needed)
-# =========================================================
-
-HTML_POST_BRIDGE = """<script>
-function executeAction(actValue) {
-    window.parent.postMessage({type: 'recalpt_action', value: actValue}, '*');
-}
-</script>"""
-
-# =========================================================
-# HTML BUILDERS & SVG ICONS
-# =========================================================
-SVG_BACK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>'
-SVG_EDIT = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>'
-SVG_DELETE = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>'
-SVG_COPY = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
-SVG_SHARE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>'
-SVG_DL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'
-SVG_ZOOM = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>'
 SVG_BOX = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#C97D98" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>'
 
+# =========================================================
+# DETAIL CARD (iframe-based for HTML layout)
+# =========================================================
 def build_detail_card_html(extracted_json):
     merchant = extracted_json.get("seller", {}).get("name", extracted_json.get("store_name", "—")) or "—"
     receipt_no = extracted_json.get("document_number", extracted_json.get("receipt_no", "—")) or "—"
@@ -216,14 +194,8 @@ def build_detail_card_html(extracted_json):
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:transparent;padding:2px}}
 svg{{display:inline-block;vertical-align:middle;flex-shrink:0}}
-.card{{background:#FFF6F8;border-radius:24px;border:1px solid #F8D7E3;padding:24px 28px;overflow:hidden}}
-.dc-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}}
-.dc-back{{width:32px;height:32px;border-radius:50%;background:#F8D7E3;color:#A35271;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .15s}}
-.dc-back:hover{{background:#F4C6D5}}
-.dc-title{{font-size:17px;font-weight:700;color:#4A2E35;flex:1;text-align:center}}
-.dc-icons{{display:flex;gap:8px;flex-shrink:0}}
-.icon-btn{{width:32px;height:32px;border-radius:8px;background:#FFF0F5;color:#A35271;border:1px solid #F4C6D5;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s}}
-.icon-btn:hover{{background:#F4C6D5}}
+.card{{background:#FFF6F8;border-radius:24px;border:1px solid #F8D7E3;padding:24px 28px}}
+.dc-title{{font-size:17px;font-weight:700;color:#4A2E35;text-align:center;margin-bottom:20px}}
 .badge{{display:inline-block;background:#FFF0F5;color:#A35271;border:1px solid #F4C6D5;border-radius:8px;font-size:12px;padding:4px 12px;margin-bottom:16px}}
 .info-row{{display:flex;gap:8px;font-size:13px;margin-bottom:12px;align-items:baseline}}
 .lbl{{color:#7A5A63;min-width:130px;flex-shrink:0;font-weight:500}}
@@ -240,17 +212,9 @@ svg{{display:inline-block;vertical-align:middle;flex-shrink:0}}
 .t-row{{display:flex;justify-content:space-between;font-size:13px;color:#A07A85;margin-bottom:8px}}
 .grand{{color:#4A2E35;font-weight:700;font-size:15px}}
 </style>
-{HTML_POST_BRIDGE}
 </head><body>
 <div class="card">
-  <div class="dc-header">
-    <button class="dc-back" onclick="executeAction('back')">{SVG_BACK}</button>
-    <span class="dc-title">รายละเอียดเอกสาร (OCR Categorized)</span>
-    <div class="dc-icons">
-      <button class="icon-btn" title="แก้ไข" onclick="executeAction('edit')">{SVG_EDIT}</button>
-      <button class="icon-btn" title="ลบ" onclick="executeAction('delete')">{SVG_DELETE}</button>
-    </div>
-  </div>
+  <div class="dc-title">รายละเอียดเอกสาร (OCR Categorized)</div>
   <div class="dc-body">
     <span class="badge">{receipt_type}</span>
     <div class="info-row"><span class="lbl">หัวข้อ / ร้านค้า :</span><span class="val">{merchant}</span></div>
@@ -275,59 +239,111 @@ svg{{display:inline-block;vertical-align:middle;flex-shrink:0}}
 </div>
 </body></html>"""
 
-def build_action_bar_html():
-    return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:transparent}}
-svg{{display:inline-block;vertical-align:middle}}
-.bar{{display:flex;gap:10px;width:100%;padding:2px}}
-.btn{{flex:1;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;gap:7px;font-size:14px;font-weight:600;cursor:pointer;border:1px solid #F4C6D5;background:#FFF0F5;color:#A35271;transition:background .15s,transform .1s;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}}
-.btn:hover{{background:#F4C6D5;transform:translateY(-1px)}}
-.btn:active{{transform:translateY(0)}}
-.btn.primary{{background:#C97D98;color:#fff;border:none}}
-.btn.primary:hover{{background:#A35271}}
-</style>
-{HTML_POST_BRIDGE}
-</head><body>
-<div class="bar">
-  <button class="btn" onclick="executeAction('copy')">{SVG_COPY} คัดลอก</button>
-  <button class="btn" onclick="executeAction('share')">{SVG_SHARE} แชร์</button>
-  <button class="btn primary" onclick="executeAction('export')">{SVG_DL} ส่งออก (Save)</button>
-</div>
-</body></html>"""
+# =========================================================
+# PDF EXPORT
+# =========================================================
+def generate_pdf(processed_img, extracted_json):
+    """Build a PDF with cropped image on page 1 and extracted text on page 2."""
+    if not HAS_FPDF:
+        raise ImportError("fpdf2 not installed")
 
-def build_img_controls_html():
-    return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:transparent}}
-svg{{display:inline-block;vertical-align:middle}}
-.row{{display:flex;justify-content:space-between;align-items:center;padding:10px 2px 2px}}
-.round-btn{{width:42px;height:42px;border-radius:50%;background:#FFFFFF;border:1px solid #F4C6D5;cursor:pointer;box-shadow:0 2px 8px rgba(74,46,53,0.08);color:#4A2E35;transition:background .15s}}
-.round-btn:hover{{background:#F8D7E3}}
-</style>
-{HTML_POST_BRIDGE}
-</head><body>
-<div class="row">
-  <button class="round-btn" onclick="executeAction('back')">{SVG_BACK}</button>
-  <button class="round-btn" onclick="executeAction('maximize')">{SVG_ZOOM}</button>
-</div>
-</body></html>"""
+    merchant = extracted_json.get("seller", {}).get("name", extracted_json.get("store_name", "—")) or "—"
+    receipt_no = extracted_json.get("document_number", extracted_json.get("receipt_no", "—")) or "—"
+    date_val = extracted_json.get("document_date", extracted_json.get("date", "—")) or "—"
+    receipt_type = extracted_json.get("document_type", "Receipt/Tax Invoice") or "Receipt/Tax Invoice"
+    items_list = extracted_json.get("items", []) or []
+    subtotal_val = safe_float(extracted_json.get("amount_before_tax", extracted_json.get("subtotal", 0)))
+    vat_val = safe_float(extracted_json.get("vat_amount", extracted_json.get("vat", 0)))
+    total_val = safe_float(extracted_json.get("grand_total", extracted_json.get("total", 0)))
+
+    # Convert image to RGB JPEG bytes
+    display_img = cv2.cvtColor(processed_img, cv2.COLOR_GRAY2RGB) if len(
+        processed_img.shape) == 2 else cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
+    _, img_buf = cv2.imencode('.jpg', display_img)
+
+    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+        tmp.write(img_buf.tobytes())
+        tmp_path = tmp.name
+
+    try:
+        pdf = fpdf.FPDF()
+
+        # --- Page 1: Image ---
+        pdf.add_page()
+        img_h, img_w = processed_img.shape[:2]
+        page_w = pdf.w - 20
+        page_h_avail = pdf.h - 20
+        scale = min(page_w / img_w, page_h_avail / img_h)
+        draw_w = img_w * scale
+        draw_h = img_h * scale
+        x_offset = (pdf.w - draw_w) / 2
+        pdf.image(tmp_path, x=x_offset, y=10, w=draw_w, h=draw_h)
+
+        # --- Page 2: Text ---
+        pdf.add_page()
+        pdf.set_font('Helvetica', 'B', 16)
+        pdf.cell(0, 10, 'Document OCR Result', ln=True, align='C')
+        pdf.ln(4)
+
+        def safe_str(s):
+            return str(s).encode('latin-1', 'replace').decode('latin-1')
+
+        rows = [
+            ('Type', receipt_type),
+            ('Merchant', merchant),
+            ('Document No', receipt_no),
+            ('Date', date_val),
+        ]
+        for label, val in rows:
+            pdf.set_font('Helvetica', 'B', 11)
+            pdf.cell(50, 8, f'{label}:', ln=False)
+            pdf.set_font('Helvetica', '', 11)
+            pdf.cell(0, 8, safe_str(val), ln=True)
+
+        pdf.ln(4)
+        pdf.set_draw_color(200, 180, 190)
+        pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
+        pdf.ln(6)
+
+        # Items table
+        pdf.set_font('Helvetica', 'B', 10)
+        pdf.set_fill_color(255, 240, 245)
+        pdf.cell(12, 8, '#', border=1, fill=True, align='C')
+        pdf.cell(80, 8, 'Description', border=1, fill=True)
+        pdf.cell(18, 8, 'Qty', border=1, fill=True, align='C')
+        pdf.cell(30, 8, 'Unit Price', border=1, fill=True, align='R')
+        pdf.cell(0, 8, 'Amount', border=1, fill=True, align='R', ln=True)
+
+        pdf.set_font('Helvetica', '', 10)
+        for idx, item in enumerate(items_list):
+            name = item.get("item_description", item.get("name", "—"))
+            qty = safe_int(item.get("quantity", item.get("qty", 1)))
+            price = safe_float(item.get("unit_price", 0))
+            amt = safe_float(item.get("subtotal", qty * price))
+            pdf.cell(12, 7, str(idx + 1), border='B', align='C')
+            pdf.cell(80, 7, safe_str(name), border='B')
+            pdf.cell(18, 7, str(qty), border='B', align='C')
+            pdf.cell(30, 7, f'{price:,.2f}', border='B', align='R')
+            pdf.cell(0, 7, f'{amt:,.2f}', border='B', align='R', ln=True)
+
+        pdf.ln(4)
+        if subtotal_val:
+            pdf.set_font('Helvetica', '', 10)
+            pdf.cell(0, 7, f'Subtotal (before VAT): {subtotal_val:,.2f}', align='R', ln=True)
+        if vat_val:
+            pdf.cell(0, 7, f'VAT: {vat_val:,.2f}', align='R', ln=True)
+        pdf.set_font('Helvetica', 'B', 12)
+        pdf.cell(0, 9, f'Total: {total_val:,.2f}', align='R', ln=True)
+
+        return pdf.output(dest='S').encode('latin-1')
+    finally:
+        os.unlink(tmp_path)
 
 # =========================================================
 # PAGE ROUTING (STATE MACHINE)
 # =========================================================
 if "app_phase" not in st.session_state:
     st.session_state["app_phase"] = "UPLOAD"
-
-action = st.query_params.get("triggered_event", "")
-crop_pts_json = st.query_params.get("crop_pts", "")
-
-if action == "back":
-    st.query_params.clear()
-    reset_app()
-    st.rerun()
 
 # ---------------------------------------------------------
 # PHASE 1 : UPLOAD
@@ -344,13 +360,11 @@ if st.session_state["app_phase"] == "UPLOAD":
 
         with st.spinner("⏳ กำลังวิเคราะห์และหาขอบเอกสาร..."):
             img = load_image_or_pdf(file_bytes, file_name)
-            if img is None: 
+            if img is None:
                 st.error("❌ Unsupported file")
                 st.stop()
-            
-            # Detect 4 corners instead of cropping immediately
+
             pts = detect_document_corners(img)
-            
             st.session_state["orig_img"] = img
             st.session_state["detected_pts"] = pts
             st.session_state["app_phase"] = "CROP"
@@ -362,13 +376,13 @@ if st.session_state["app_phase"] == "UPLOAD":
 elif st.session_state["app_phase"] == "CROP":
     orig_img = st.session_state["orig_img"]
     pts = st.session_state["detected_pts"]
-    
+
     # st_cropper returns None until the user confirms
     final_pts = st_cropper(orig_img, pts, key="cropper")
-    
+
     if final_pts is not None:
         final_pts = np.array(final_pts, dtype="float32")
-        
+
         with st.spinner("⏳ กำลังครอบตัด แก้เอียง และเพิ่มความชัด..."):
             warped = four_point_transform(orig_img, final_pts)
             deskewed = deskew_image(warped)
@@ -401,28 +415,8 @@ elif st.session_state["app_phase"] == "RESULT":
 
     has_error = (isinstance(extracted_json, dict) and "error" in extracted_json and extracted_json["error"])
 
-    if action == "edit":
-        st.query_params.clear()
-        st.toast("✏️ ระบบ: เปิดสิทธิ์ให้แก้ไขข้อความที่ OCR อ่านได้ (Editable Text)")
-    elif action == "delete":
-        st.query_params.clear()
-        st.toast("🗑️ ระบบ: ล้างข้อมูลจำลองบนหน้าจอเรียบร้อย")
-    elif action == "copy":
-        st.query_params.clear()
-        st.toast("📋 ระบบ: คัดลอกข้อมูลลง Clipboard")
-    elif action == "share":
-        st.query_params.clear()
-        st.toast("🔗 ระบบ: คัดลอกลิงก์แชร์เอกสารสำเร็จ")
-    elif action == "maximize":
-        st.query_params.clear()
-        st.toast("🔍 ระบบ: ขยายภาพเอกสารเต็มหน้าจอ")
-    elif action == "export":
-        st.query_params.clear()
-        st.success(f"🎉 ประมวลผลและแยกหมวดหมู่เอกสารเสร็จสมบูรณ์ (พร้อมนำไปใช้งานต่อ)")
-        st.balloons()
-
     st.markdown('<div class="result-wrapper">', unsafe_allow_html=True)
-    col_left, col_right = st.columns([1, 1])
+    col_left, col_right = st.columns([1, 1], gap="large")
 
     with col_left:
         st.markdown('<div class="img-card-wrap">', unsafe_allow_html=True)
@@ -430,15 +424,37 @@ elif st.session_state["app_phase"] == "RESULT":
             processed_img.shape) == 2 else cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
         st.image(display_img, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
-        components.html(build_img_controls_html(), height=58, scrolling=False)
+
+        # Back button — native Streamlit (no iframe, no blank white box)
+        if st.button("← กลับ", key="back_btn", type="secondary"):
+            reset_app()
+            st.rerun()
 
     with col_right:
         if has_error:
             st.error(f"❌ {extracted_json['error']}")
         else:
             items_count = len(extracted_json.get("items", []) or [])
-            card_height = 430 + max(0, items_count - 2) * 38
+            # Card height: base 300px + 40px per item row + fixed totals section
+            card_height = 300 + (items_count * 40) + 100
             components.html(build_detail_card_html(extracted_json), height=card_height, scrolling=False)
-            components.html(build_action_bar_html(), height=58, scrolling=False)
+
+            # Export PDF — native download button (no iframe)
+            if HAS_FPDF:
+                try:
+                    pdf_bytes = generate_pdf(processed_img, extracted_json)
+                    st.download_button(
+                        label="⬇️ ส่งออก PDF (ภาพ + รายละเอียด)",
+                        data=pdf_bytes,
+                        file_name="ocr_document.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        type="primary",
+                        key="export_pdf_btn"
+                    )
+                except Exception as e:
+                    st.warning(f"ไม่สามารถสร้าง PDF ได้: {e}")
+            else:
+                st.info("ติดตั้ง fpdf2 เพื่อใช้ฟีเจอร์ส่งออก PDF: `pip install fpdf2`")
 
     st.markdown('</div>', unsafe_allow_html=True)
