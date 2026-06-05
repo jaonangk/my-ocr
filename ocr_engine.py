@@ -136,135 +136,102 @@ def four_point_transform(image, pts):
     M = cv2.getPerspectiveTransform(rect, dst)
     return cv2.warpPerspective(image, M, (maxWidth, maxHeight))
 
-def _score_quad(approx, img_area):
-    """
-    ให้คะแนน quadrilateral โดยพิจารณา:
-    - ขนาดพื้นที่เทียบกับรูปทั้งหมด (ควรใหญ่แต่ไม่เต็ม)
-    - ความสมมาตร / aspect ratio ที่สมเหตุสมผล
-    - จำนวนจุดเท่ากับ 4 พอดี
-    """
-    if len(approx) != 4:
-        return 0.0
-    pts = approx.reshape(4, 2).astype("float32")
-    quad_area = cv2.contourArea(approx)
-    area_ratio = quad_area / img_area
-    # ต้องครอบคลุมอย่างน้อย 8% และไม่เกิน 97% ของภาพ
-    if area_ratio < 0.08 or area_ratio > 0.97:
-        return 0.0
-    # ตรวจ aspect ratio ของ bounding rect (ใบเสร็จมักสูงกว่ากว้าง 1:1.5 – 1:6)
-    x, y, w, h = cv2.boundingRect(approx)
-    ar = max(w, h) / max(min(w, h), 1)
-    if ar > 8:
-        return 0.0
-    return area_ratio  # ยิ่งใหญ่ = ยิ่งดี (ในขอบเขตที่เหมาะสม)
-
-
-def _find_best_quad(contours, img_area):
-    """
-    วนลองหาสี่เหลี่ยม 4 มุมที่ดีที่สุดจาก contour list
-    ลอง epsilon หลายค่าเพื่อรับมือกับขอบกระดาษยับ / แสงไม่สม่ำเสมอ
-    """
-    best_approx = None
-    best_score = 0.0
-    epsilons = [0.02, 0.03, 0.04, 0.05, 0.06]
-
-    # เรียง contour จากใหญ่ → เล็ก และเอาแค่ top-5
-    sorted_c = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
-
-    for c in sorted_c:
-        if cv2.contourArea(c) < img_area * 0.06:
-            continue
-        peri = cv2.arcLength(c, True)
-        for eps in epsilons:
-            approx = cv2.approxPolyDP(c, eps * peri, True)
-            score = _score_quad(approx, img_area)
-            if score > best_score:
-                best_score = score
-                best_approx = approx
-
-    return best_approx, best_score
-
-
-def _build_edge_map(gray):
-    """สร้าง edge map หลายวิธีแล้ว OR รวมกัน เพื่อรับมือกับแสงทุกสภาพ"""
-    h, w = gray.shape
-
-    # --- วิธี 1: CLAHE + Canny ---
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(gray)
-    blurred1 = cv2.GaussianBlur(enhanced, (5, 5), 0)
-    # ใช้ median-based threshold อัตโนมัติ (แทนค่าตายตัว 30/150)
-    med = float(np.median(blurred1))
-    lo = max(0, int(0.4 * med))
-    hi = min(255, int(1.2 * med))
-    canny1 = cv2.Canny(blurred1, lo, hi)
-
-    # --- วิธี 2: Canny ค่า sigma ต่างกัน (จับขอบละเอียด) ---
-    blurred2 = cv2.GaussianBlur(gray, (9, 9), 0)
-    canny2 = cv2.Canny(blurred2, 20, 80)
-
-    # --- วิธี 3: Adaptive Threshold (เอาขอบตัวอักษร+กระดาษ) ---
-    adapt = cv2.adaptiveThreshold(
-        cv2.GaussianBlur(gray, (7, 7), 0), 255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 10
-    )
-
-    # รวม edge map ทั้ง 3 วิธี
-    combined = cv2.bitwise_or(canny1, cv2.bitwise_or(canny2, adapt))
-
-    # Morphological close เชื่อมเส้นขาด
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-    closed = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel, iterations=2)
-    dilated = cv2.dilate(closed, kernel, iterations=1)
-    return dilated
-
-
 def crop_document(image):
-    """
-    ตัดขอบเอกสารออกจากพื้นหลัง — Multi-Strategy Pipeline
-    1. สร้าง edge map รวม (CLAHE + Canny + Adaptive)
-    2. ค้นหา contour ที่ใหญ่ที่สุดและลองหา quad 4 มุม (หลาย epsilon)
-    3. ถ้าได้ quad → Perspective Transform (ตรงสุด)
-    4. ถ้าไม่ได้ quad → Bounding Box crop พร้อม padding
-    5. ถ้าครอบพื้นที่ > 90% ของรูป (ภาพถ่ายชิดมาก) → คืนต้นฉบับ
-    """
+    """ค้นหาขอบใบเสร็จแบบโหด (อัปเกรดแผนสำรอง ตัดโต๊ะทิ้ง 100%)"""
     orig = image.copy()
-    img_area = image.shape[0] * image.shape[1]
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    # ---- ขั้นที่ 1: สร้าง edge map แบบรวม ----
-    edge_map = _build_edge_map(gray)
-
-    # ---- ขั้นที่ 2: หา contours ----
-    contours, _ = cv2.findContours(edge_map, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # 1. จับขอบแบบ Canny (จับเส้นขอบที่ตัดกันชัดเจน เช่น ขอบกระดาษขาวกับโต๊ะดำ)
+    edged = cv2.Canny(blurred, 30, 150)
+    
+    # 2. ขยายเส้นขอบให้เชื่อมติดกันเป็นก้อนเดียว (ป้องกันเส้นขาดจากแสงเงา)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    dilated = cv2.dilate(edged, kernel, iterations=2)
+    
+    # 3. หาก้อน (Contours) ทั้งหมดที่เป็นเส้นรอบนอก
+    contours, _ = cv2.findContours(dilated.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
     if not contours:
         return orig
-
-    # ---- ขั้นที่ 3: หา quad 4 มุม ----
-    best_approx, best_score = _find_best_quad(contours, img_area)
-
-    if best_approx is not None and best_score > 0:
-        pts = best_approx.reshape(4, 2).astype("float32")
-        quad_area = cv2.contourArea(best_approx)
-        # ถ้า quad ครอบ > 90% → ภาพถ่ายชิดมาก ไม่จำเป็นต้อง warp
-        if quad_area / img_area > 0.90:
-            return orig
-        warped = four_point_transform(orig, pts)
-        return warped
-
-    # ---- ขั้นที่ 4: Fallback — Bounding Box ของ contour ใหญ่สุด ----
+        
+    # 4. เลือกก้อนที่มีพื้นที่ "ใหญ่ที่สุด" ในรูป (ต้องเป็นเอกสารแน่นอน)
     c = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(c) < img_area * 0.05:
-        return orig  # ไม่มีเอกสารชัดเจน
-
-    x, y, w, h = cv2.boundingRect(c)
-    # ถ้า bounding box ครอบ > 90% → คืนต้นฉบับ
-    if (w * h) / img_area > 0.90:
+    
+    # 5. กรองขยะ (ถ้าก้อนใหญ่สุดยังเล็กกว่า 5% ของภาพ แสดงว่าไม่ใช่เอกสาร)
+    img_area = image.shape[0] * image.shape[1]
+    if cv2.contourArea(c) < (img_area * 0.05):
         return orig
 
-    pad = 20
-    x1 = max(0, x - pad)
-    y1 = max(0, y - pad)
-    x2 = min(image.shape[1], x + w + pad)
-    y2 = min(image.shape[0], y + h + pad)
-    return orig[y1:y2, x1:x2]
+    # 6. พยายามลากเส้นแบบ 4 มุมก่อน (Perspective Transform)
+    peri = cv2.arcLength(c, True)
+    approx = cv2.approxPolyDP(c, 0.05 * peri, True) # เพิ่มความยืดหยุ่นให้มุม
+    
+    if len(approx) == 4:
+        warped = four_point_transform(orig, approx.reshape(4, 2))
+        return warped
+    else:
+        # 🚨 แผนสำรอง! (Fallback): ถ้าขอบกระดาษยับและไม่เป็น 4 มุมเป๊ะ
+        # ให้ครอบกล่องสี่เหลี่ยม (Bounding Box) ล้อมรอบใบเสร็จนั้นแล้วตัดโต๊ะทิ้งเลย!
+        x, y, w, h = cv2.boundingRect(c)
+        pad = 15 # เผื่อขอบกระดาษไว้ 15 px กันตัวหนังสือขาด
+        x1, y1 = max(0, x - pad), max(0, y - pad)
+        x2, y2 = min(image.shape[1], x + w + pad), min(image.shape[0], y + h + pad)
+        return orig[y1:y2, x1:x2]
+    
+def order_points(pts):
+    rect = np.zeros((4, 2), dtype="float32")
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]
+    rect[2] = pts[np.argmax(s)]
+    diff = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(diff)]
+    rect[3] = pts[np.argmax(diff)]
+    return rect
+
+def four_point_transform(image, pts):
+    rect = order_points(pts)
+    (tl, tr, br, bl) = rect
+    widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+    widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+    maxWidth = max(int(widthA), int(widthB))
+    heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+    heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+    maxHeight = max(int(heightA), int(heightB))
+    dst = np.array([
+        [0, 0],
+        [maxWidth - 1, 0],
+        [maxWidth - 1, maxHeight - 1],
+        [0, maxHeight - 1]], dtype="float32")
+    M = cv2.getPerspectiveTransform(rect, dst)
+    return cv2.warpPerspective(image, M, (maxWidth, maxHeight))
+
+def crop_document(image):
+    """ฟังก์ชันตัดขอบตัวโหด (ตัดฉากหลังโต๊ะทิ้ง 100%)"""
+    orig = image.copy()
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edged = cv2.Canny(blurred, 30, 150)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    dilated = cv2.dilate(edged, kernel, iterations=2)
+    contours, _ = cv2.findContours(dilated.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours:
+        return orig
+        
+    c = max(contours, key=cv2.contourArea)
+    img_area = image.shape[0] * image.shape[1]
+    if cv2.contourArea(c) < (img_area * 0.05):
+        return orig
+
+    peri = cv2.arcLength(c, True)
+    approx = cv2.approxPolyDP(c, 0.05 * peri, True)
+    
+    if len(approx) == 4:
+        return four_point_transform(orig, approx.reshape(4, 2))
+    else:
+        x, y, w, h = cv2.boundingRect(c)
+        pad = 15
+        x1, y1 = max(0, x - pad), max(0, y - pad)
+        x2, y2 = min(image.shape[1], x + w + pad), min(image.shape[0], y + h + pad)
+        return orig[y1:y2, x1:x2]
