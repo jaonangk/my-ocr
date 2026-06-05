@@ -335,19 +335,11 @@ def get_cropper_html(image_np, pts):
                     Math.round(p.y / scaleY)
                 ]);
                 
-                try {{
-                    const url = new URL(window.parent.location.href);
-                    url.searchParams.set("triggered_event", "crop_confirmed");
-                    url.searchParams.set("crop_pts", JSON.stringify(finalPts));
-                    window.parent.location.href = url.toString();
-                }} catch(err) {{
-                    // Fallback to postMessage if cross-origin policy prevents direct access
-                    window.parent.postMessage({{
-                        type: 'recalpt_action', 
-                        value: 'crop_confirmed',
-                        points: finalPts
-                    }}, '*');
-                }}
+                window.parent.postMessage({{
+                    type: 'recalpt_action_v2', 
+                    value: 'crop_confirmed',
+                    points: finalPts
+                }}, '*');
             }});
         </script>
     </body>

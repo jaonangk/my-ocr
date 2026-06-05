@@ -169,10 +169,8 @@ def normalize_date(date_str):
 # =========================================================
 st.markdown("""
 <script>
-if (!window.hasRecAiptListener) {
-    window.hasRecAiptListener = true;
     window.addEventListener('message', function(e) {
-        if (e.data && e.data.type === 'recalpt_action') {
+        if (e.data && e.data.type === 'recalpt_action_v2') {
             const url = new URL(window.parent.location.href);
             url.searchParams.set("triggered_event", e.data.value);
             if (e.data.points) {
@@ -180,8 +178,12 @@ if (!window.hasRecAiptListener) {
             }
             window.parent.location.href = url.toString();
         }
+        else if (e.data && e.data.type === 'recalpt_action') {
+            const url = new URL(window.parent.location.href);
+            url.searchParams.set("triggered_event", e.data.value);
+            window.parent.location.href = url.toString();
+        }
     });
-}
 </script>
 """, unsafe_allow_html=True)
 
