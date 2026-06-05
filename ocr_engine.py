@@ -20,26 +20,6 @@ def load_image_or_pdf(file_bytes, file_name):
     nparr = np.frombuffer(file_bytes, np.uint8)
     return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-def crop_document_contour(image):
-    """ฟังก์ชันใหม่: ตรวจหาขอบเอกสารในภาพมุมกว้าง แล้ว Crop เอาสิ่งของอื่นออก"""
-    orig = image.copy()
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    
-    edged = cv2.Canny(blur, 75, 200)
-    cnts, _ = cv2.findContours(edged.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if len(cnts) == 0:
-        return image 
-
-    c = max(cnts, key=cv2.contourArea)
-    if cv2.contourArea(c) < (image.shape[0] * image.shape[1] * 0.1):
-        return image
-
-    x, y, w, h = cv2.boundingRect(c)
-    cropped = orig[y:y+h, x:x+w]
-    return cropped
-
 def deskew_image(image):
     """Estimate and correct small receipt rotation angles."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -157,34 +137,44 @@ def four_point_transform(image, pts):
     return cv2.warpPerspective(image, M, (maxWidth, maxHeight))
 
 def crop_document(image):
-    """ค้นหาขอบใบเสร็จในภาพกว้าง แล้วตัดส่วนที่เหลือทิ้ง"""
+    """ค้นหาขอบใบเสร็จแบบโหด (อัปเกรดแผนสำรอง ตัดโต๊ะทิ้ง 100%)"""
     orig = image.copy()
-    height = image.shape[0]
-    # ย่อภาพชั่วคราวเพื่อให้หาเส้นขอบได้เร็วและแม่นยำขึ้น
-    ratio = height / 500.0
-    dim = (int(image.shape[1] / ratio), 500)
-    resized = cv2.resize(image, dim)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # 1. จับขอบแบบ Canny (จับเส้นขอบที่ตัดกันชัดเจน เช่น ขอบกระดาษขาวกับโต๊ะดำ)
+    edged = cv2.Canny(blurred, 30, 150)
+    
+    # 2. ขยายเส้นขอบให้เชื่อมติดกันเป็นก้อนเดียว (ป้องกันเส้นขาดจากแสงเงา)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    dilated = cv2.dilate(edged, kernel, iterations=2)
+    
+    # 3. หาก้อน (Contours) ทั้งหมดที่เป็นเส้นรอบนอก
+    contours, _ = cv2.findContours(dilated.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours:
+        return orig
+        
+    # 4. เลือกก้อนที่มีพื้นที่ "ใหญ่ที่สุด" ในรูป (ต้องเป็นเอกสารแน่นอน)
+    c = max(contours, key=cv2.contourArea)
+    
+    # 5. กรองขยะ (ถ้าก้อนใหญ่สุดยังเล็กกว่า 5% ของภาพ แสดงว่าไม่ใช่เอกสาร)
+    img_area = image.shape[0] * image.shape[1]
+    if cv2.contourArea(c) < (img_area * 0.05):
+        return orig
 
-    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    edged = cv2.Canny(gray, 75, 200)
-
-    # หา Contours (เส้นรอบรูป) ทั้งหมด
-    contours, _ = cv2.findContours(edged.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
-    screenCnt = None
-
-    # วนลูปหาเส้นรอบรูปที่มี 4 มุม (สี่เหลี่ยมใบเสร็จ)
-    for c in contours:
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-        if len(approx) == 4:
-            screenCnt = approx
-            break
-
-    # ถ้าเจอรูปสี่เหลี่ยม ให้ตัดขอบ ถ้าไม่เจอให้คืนค่าภาพเดิมกลับไป
-    if screenCnt is not None:
-        warped = four_point_transform(orig, screenCnt.reshape(4, 2) * ratio)
+    # 6. พยายามลากเส้นแบบ 4 มุมก่อน (Perspective Transform)
+    peri = cv2.arcLength(c, True)
+    approx = cv2.approxPolyDP(c, 0.05 * peri, True) # เพิ่มความยืดหยุ่นให้มุม
+    
+    if len(approx) == 4:
+        warped = four_point_transform(orig, approx.reshape(4, 2))
         return warped
     else:
-        return orig
+        # 🚨 แผนสำรอง! (Fallback): ถ้าขอบกระดาษยับและไม่เป็น 4 มุมเป๊ะ
+        # ให้ครอบกล่องสี่เหลี่ยม (Bounding Box) ล้อมรอบใบเสร็จนั้นแล้วตัดโต๊ะทิ้งเลย!
+        x, y, w, h = cv2.boundingRect(c)
+        pad = 15 # เผื่อขอบกระดาษไว้ 15 px กันตัวหนังสือขาด
+        x1, y1 = max(0, x - pad), max(0, y - pad)
+        x2, y2 = min(image.shape[1], x + w + pad), min(image.shape[0], y + h + pad)
+        return orig[y1:y2, x1:x2]

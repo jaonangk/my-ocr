@@ -13,7 +13,6 @@ st.set_page_config(
 
 from llm_engine import call_typhoon_llm
 from ocr_engine import (
-    crop_document_contour, # เพิ่มฟังก์ชันตัดขอบเข้ามา
     deskew_image,
     load_image_or_pdf,
     process_method_4_sharpening,
