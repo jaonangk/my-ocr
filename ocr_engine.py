@@ -138,97 +138,79 @@ def four_point_transform(image, pts):
 
 def crop_document(image):
     """
-    Smart Document Crop
-    - หาเอกสารจาก contour
-    - ถ้าเจอ 4 มุม ใช้ perspective transform
-    - ถ้าไม่เจอ ใช้ bounding box
-    - ไม่ตัดตัวหนังสือหาย
+    Smart Document Crop (vFlat-like Approach)
+    ใช้เทคนิคการย่อสเกลภาพและ Bilateral Filter เพื่อหาขอบเอกสารให้แม่นยำขั้นสุด
     """
-
     orig = image.copy()
+    
+    # 1. ย่อภาพก่อนประมวลผล เพื่อลด Noise (ลายไม้/เงา) และทำให้หาขอบได้แม่นยำ/เร็วขึ้น
+    height = image.shape[0]
+    ratio = height / 800.0  # ล็อกความสูงไว้ที่ 800px ชั่วคราว
+    if ratio < 1: ratio = 1
+    dim = (int(image.shape[1] / ratio), int(height / ratio))
+    resized = cv2.resize(image, dim)
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # 2. แปลงเป็นขาวดำ และใช้ Bilateral Filter ลบพื้นผิวแต่ "รักษาความคมของขอบกระดาษ" ไว้
+    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.bilateralFilter(gray, 9, 75, 75)
 
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    # 3. จับเส้นขอบด้วย Canny
+    edged = cv2.Canny(blurred, 30, 200)
 
-    thresh = cv2.adaptiveThreshold(
-        blurred,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV,
-        21,
-        10
-    )
+    # 4. ทำให้เส้นขอบเชื่อมติดกัน (อุดรอยรั่วเวลาขอบกระดาษกลืนกับพื้น)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    dilated = cv2.dilate(edged, kernel, iterations=2)
+    closed = cv2.erode(dilated, kernel, iterations=1)
 
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_RECT,
-        (5, 5)
-    )
-
-    closed = cv2.morphologyEx(
-        thresh,
-        cv2.MORPH_CLOSE,
-        kernel,
-        iterations=2
-    )
-
-    contours, _ = cv2.findContours(
-        closed,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
+    # 5. หา Contours (เส้นรอบนอก)
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     if not contours:
         return orig
 
-    contours = sorted(
-        contours,
-        key=cv2.contourArea,
-        reverse=True
-    )
-
-    img_area = image.shape[0] * image.shape[1]
-
+    # เรียงขนาดจากใหญ่ไปเล็ก เอามาเช็กแค่ 5 อันแรก
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
     document_contour = None
+    img_area = dim[0] * dim[1]
 
     for c in contours:
-
-        area = cv2.contourArea(c)
-
-        if area < img_area * 0.10:
+        # ถ้าก้อนใหญ่สุดยังเล็กกว่า 5% ของภาพ แสดงว่าเป็นแค่ขยะ ไม่ใช่กระดาษ
+        if cv2.contourArea(c) < img_area * 0.05:
             continue
 
         peri = cv2.arcLength(c, True)
-
-        approx = cv2.approxPolyDP(
-            c,
-            0.02 * peri,
-            True
-        )
-
-        if len(approx) == 4:
-            document_contour = approx
+        
+        # 🔥 ไม้ตาย: ค่อยๆ เพิ่มความยืดหยุ่นในการหามุม (epsilon)
+        # ถ้ากระดาษยับหรือโค้งงอ มันจะค่อยๆ อนุโลมจนกว่าจะเจอ 4 มุมเป๊ะๆ
+        for eps in [0.02, 0.03, 0.04, 0.05]:
+            approx = cv2.approxPolyDP(c, eps * peri, True)
+            if len(approx) == 4:
+                document_contour = approx
+                break
+        
+        if document_contour is not None:
             break
 
+    # 🌟 แผน A: เจอ 4 มุม -> ดึงภาพให้ตรงเป๊ะแบบสแกนเนอร์
     if document_contour is not None:
-
-        warped = four_point_transform(
-            orig,
-            document_contour.reshape(4, 2)
-        )
-
+        # ขยายพิกัดมุมกลับไปเทียบกับขนาดภาพต้นฉบับ
+        document_contour = document_contour.reshape(4, 2) * ratio
+        warped = four_point_transform(orig, document_contour)
         return warped
 
+    # 🚨 แผน B: ขอบพังเกินไป หา 4 มุมไม่เจอ -> ครอบเป็นกล่อง Bounding Box คลุมแทน
     c = contours[0]
-
     x, y, w, h = cv2.boundingRect(c)
 
-    pad_x = int(w * 0.03)
-    pad_y = int(h * 0.03)
+    # ขยายพิกัดกลับไปขนาดจริง
+    x, y, w, h = int(x * ratio), int(y * ratio), int(w * ratio), int(h * ratio)
+
+    # เผื่อขอบ (Padding) 5% ออกไปด้านนอก ป้องกันใบมีดเฉือนโดนตัวหนังสือ
+    pad_x = int(w * 0.05)
+    pad_y = int(h * 0.05)
 
     x1 = max(0, x - pad_x)
     y1 = max(0, y - pad_y)
-
     x2 = min(image.shape[1], x + w + pad_x)
     y2 = min(image.shape[0], y + h + pad_y)
 
