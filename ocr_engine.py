@@ -137,101 +137,99 @@ def four_point_transform(image, pts):
     return cv2.warpPerspective(image, M, (maxWidth, maxHeight))
 
 def crop_document(image):
-    """ค้นหาขอบใบเสร็จแบบโหด (อัปเกรดแผนสำรอง ตัดโต๊ะทิ้ง 100%)"""
+    """
+    Smart Document Crop
+    - หาเอกสารจาก contour
+    - ถ้าเจอ 4 มุม ใช้ perspective transform
+    - ถ้าไม่เจอ ใช้ bounding box
+    - ไม่ตัดตัวหนังสือหาย
+    """
+
     orig = image.copy()
+
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    
-    # 1. จับขอบแบบ Canny (จับเส้นขอบที่ตัดกันชัดเจน เช่น ขอบกระดาษขาวกับโต๊ะดำ)
-    edged = cv2.Canny(blurred, 30, 150)
-    
-    # 2. ขยายเส้นขอบให้เชื่อมติดกันเป็นก้อนเดียว (ป้องกันเส้นขาดจากแสงเงา)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-    dilated = cv2.dilate(edged, kernel, iterations=2)
-    
-    # 3. หาก้อน (Contours) ทั้งหมดที่เป็นเส้นรอบนอก
-    contours, _ = cv2.findContours(dilated.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
+
+    thresh = cv2.adaptiveThreshold(
+        blurred,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        21,
+        10
+    )
+
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (5, 5)
+    )
+
+    closed = cv2.morphologyEx(
+        thresh,
+        cv2.MORPH_CLOSE,
+        kernel,
+        iterations=2
+    )
+
+    contours, _ = cv2.findContours(
+        closed,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
     if not contours:
         return orig
-        
-    # 4. เลือกก้อนที่มีพื้นที่ "ใหญ่ที่สุด" ในรูป (ต้องเป็นเอกสารแน่นอน)
-    c = max(contours, key=cv2.contourArea)
-    
-    # 5. กรองขยะ (ถ้าก้อนใหญ่สุดยังเล็กกว่า 5% ของภาพ แสดงว่าไม่ใช่เอกสาร)
-    img_area = image.shape[0] * image.shape[1]
-    if cv2.contourArea(c) < (img_area * 0.05):
-        return orig
 
-    # 6. พยายามลากเส้นแบบ 4 มุมก่อน (Perspective Transform)
-    peri = cv2.arcLength(c, True)
-    approx = cv2.approxPolyDP(c, 0.05 * peri, True) # เพิ่มความยืดหยุ่นให้มุม
-    
-    if len(approx) == 4:
-        warped = four_point_transform(orig, approx.reshape(4, 2))
+    contours = sorted(
+        contours,
+        key=cv2.contourArea,
+        reverse=True
+    )
+
+    img_area = image.shape[0] * image.shape[1]
+
+    document_contour = None
+
+    for c in contours:
+
+        area = cv2.contourArea(c)
+
+        if area < img_area * 0.10:
+            continue
+
+        peri = cv2.arcLength(c, True)
+
+        approx = cv2.approxPolyDP(
+            c,
+            0.02 * peri,
+            True
+        )
+
+        if len(approx) == 4:
+            document_contour = approx
+            break
+
+    if document_contour is not None:
+
+        warped = four_point_transform(
+            orig,
+            document_contour.reshape(4, 2)
+        )
+
         return warped
-    else:
-        # 🚨 แผนสำรอง! (Fallback): ถ้าขอบกระดาษยับและไม่เป็น 4 มุมเป๊ะ
-        # ให้ครอบกล่องสี่เหลี่ยม (Bounding Box) ล้อมรอบใบเสร็จนั้นแล้วตัดโต๊ะทิ้งเลย!
-        x, y, w, h = cv2.boundingRect(c)
-        pad = 15 # เผื่อขอบกระดาษไว้ 15 px กันตัวหนังสือขาด
-        x1, y1 = max(0, x - pad), max(0, y - pad)
-        x2, y2 = min(image.shape[1], x + w + pad), min(image.shape[0], y + h + pad)
-        return orig[y1:y2, x1:x2]
-    
-def order_points(pts):
-    rect = np.zeros((4, 2), dtype="float32")
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]
-    rect[2] = pts[np.argmax(s)]
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]
-    rect[3] = pts[np.argmax(diff)]
-    return rect
 
-def four_point_transform(image, pts):
-    rect = order_points(pts)
-    (tl, tr, br, bl) = rect
-    widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
-    widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
-    maxWidth = max(int(widthA), int(widthB))
-    heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
-    heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
-    maxHeight = max(int(heightA), int(heightB))
-    dst = np.array([
-        [0, 0],
-        [maxWidth - 1, 0],
-        [maxWidth - 1, maxHeight - 1],
-        [0, maxHeight - 1]], dtype="float32")
-    M = cv2.getPerspectiveTransform(rect, dst)
-    return cv2.warpPerspective(image, M, (maxWidth, maxHeight))
+    c = contours[0]
 
-def crop_document(image):
-    """ฟังก์ชันตัดขอบตัวโหด (ตัดฉากหลังโต๊ะทิ้ง 100%)"""
-    orig = image.copy()
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edged = cv2.Canny(blurred, 30, 150)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-    dilated = cv2.dilate(edged, kernel, iterations=2)
-    contours, _ = cv2.findContours(dilated.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if not contours:
-        return orig
-        
-    c = max(contours, key=cv2.contourArea)
-    img_area = image.shape[0] * image.shape[1]
-    if cv2.contourArea(c) < (img_area * 0.05):
-        return orig
+    x, y, w, h = cv2.boundingRect(c)
 
-    peri = cv2.arcLength(c, True)
-    approx = cv2.approxPolyDP(c, 0.05 * peri, True)
-    
-    if len(approx) == 4:
-        return four_point_transform(orig, approx.reshape(4, 2))
-    else:
-        x, y, w, h = cv2.boundingRect(c)
-        pad = 15
-        x1, y1 = max(0, x - pad), max(0, y - pad)
-        x2, y2 = min(image.shape[1], x + w + pad), min(image.shape[0], y + h + pad)
-        return orig[y1:y2, x1:x2]
+    pad_x = int(w * 0.03)
+    pad_y = int(h * 0.03)
+
+    x1 = max(0, x - pad_x)
+    y1 = max(0, y - pad_y)
+
+    x2 = min(image.shape[1], x + w + pad_x)
+    y2 = min(image.shape[0], y + h + pad_y)
+
+    return orig[y1:y2, x1:x2]
