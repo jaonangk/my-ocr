@@ -17,8 +17,11 @@ from ocr_engine import (
     load_image_or_pdf,
     process_method_4_sharpening,
     run_typhoon_ocr,
-    crop_document,
+    detect_document_corners,
+    four_point_transform,
 )
+from cropper_ui import get_cropper_html
+import numpy as np
 
 # =========================================================
 # GLOBAL NATIVE CSS DESIGN
@@ -172,6 +175,9 @@ if (!window.hasRecAiptListener) {
         if (e.data && e.data.type === 'recalpt_action') {
             const url = new URL(window.parent.location.href);
             url.searchParams.set("triggered_event", e.data.value);
+            if (e.data.points) {
+                url.searchParams.set("crop_pts", JSON.stringify(e.data.points));
+            }
             window.parent.location.href = url.toString();
         }
     });
@@ -326,30 +332,65 @@ svg{{display:inline-block;vertical-align:middle}}
 </body></html>"""
 
 # =========================================================
-# PAGE 1 : UPLOAD
+# PAGE ROUTING (STATE MACHINE)
 # =========================================================
-if "processed_img" not in st.session_state or st.session_state.get("file_uploaded") is None:
-    st.markdown("<div class='hero-title'>OCR Document Categorizer</div>", unsafe_allow_html=True)
-    st.markdown("<div class='hero-subtitle'>ถ่ายภาพเอกสารมุมกว้าง ระบบจะ Crop ขอบ และสกัดข้อความจัดหมวดหมู่ให้อัตโนมัติ</div>",
-                unsafe_allow_html=True)
+if "app_phase" not in st.session_state:
+    st.session_state["app_phase"] = "UPLOAD"
 
-    uploaded_file = st.file_uploader("", type=["jpg", "jpeg", "png", "pdf"], key="uploader_widget",
-                                     label_visibility="collapsed")
+action = st.query_params.get("triggered_event", "")
+crop_pts_json = st.query_params.get("crop_pts", "")
+
+if action == "back":
+    st.query_params.clear()
+    reset_app()
+    st.rerun()
+
+# ---------------------------------------------------------
+# PHASE 1 : UPLOAD
+# ---------------------------------------------------------
+if st.session_state["app_phase"] == "UPLOAD":
+    st.markdown("<div class='hero-title'>OCR Document Categorizer</div>", unsafe_allow_html=True)
+    st.markdown("<div class='hero-subtitle'>ถ่ายภาพเอกสารมุมกว้าง ระบบจะพยายามหาขอบให้ และให้คุณปรับแก้ด้วยตัวเองได้ก่อนสแกน</div>", unsafe_allow_html=True)
+
+    uploaded_file = st.file_uploader("", type=["jpg", "jpeg", "png", "pdf"], key="uploader_widget", label_visibility="collapsed")
 
     if uploaded_file is not None:
-        st.session_state["file_uploaded"] = uploaded_file
         file_bytes = uploaded_file.read()
         file_name = uploaded_file.name
 
-        with st.spinner("⏳ ตัดขอบเอกสาร (Smart Cropping) และประมวลผล..."):
+        with st.spinner("⏳ กำลังวิเคราะห์และหาขอบเอกสาร..."):
             img = load_image_or_pdf(file_bytes, file_name)
-            if img is None: st.error("❌ Unsupported file"); st.stop()
+            if img is None: 
+                st.error("❌ Unsupported file")
+                st.stop()
             
-            # 1. ตัดรูปสิ่งของรอบๆ ออกให้เหลือเฉพาะเอกสาร (ตามโจทย์เป๊ะ)
-            cropped_img = crop_document(img)
+            # Detect 4 corners instead of cropping immediately
+            pts = detect_document_corners(img)
             
-            # 2. แก้เอียงและเพิ่มความชัด
-            deskewed = deskew_image(cropped_img)
+            st.session_state["orig_img"] = img
+            st.session_state["detected_pts"] = pts
+            st.session_state["app_phase"] = "CROP"
+            st.rerun()
+
+# ---------------------------------------------------------
+# PHASE 2 : INTERACTIVE CROP
+# ---------------------------------------------------------
+elif st.session_state["app_phase"] == "CROP":
+    if action == "crop_confirmed":
+        st.query_params.clear()
+        
+        import json
+        try:
+            pts_list = json.loads(crop_pts_json)
+            final_pts = np.array(pts_list, dtype="float32")
+        except Exception:
+            final_pts = st.session_state["detected_pts"]
+
+        orig_img = st.session_state["orig_img"]
+        
+        with st.spinner("⏳ กำลังครอบตัด แก้เอียง และเพิ่มความชัด..."):
+            warped = four_point_transform(orig_img, final_pts)
+            deskewed = deskew_image(warped)
             processed = process_method_4_sharpening(deskewed)
             st.session_state["processed_img"] = processed
 
@@ -358,48 +399,52 @@ if "processed_img" not in st.session_state or st.session_state.get("file_uploade
             st.session_state["raw_text"] = raw_text
 
         if "[ERROR]" in raw_text or not raw_text.strip():
-            st.error("❌ OCR failed");
-            st.session_state.clear()
+            st.error("❌ OCR failed")
+            if st.button("ลองใหม่"):
+                reset_app()
+                st.rerun()
         else:
             with st.spinner("🤖 กำลังจัดหมวดหมู่ข้อมูล (Categorizing)..."):
                 extracted_json = call_typhoon_llm(raw_text)
                 st.session_state["extracted_json"] = extracted_json
+                st.session_state["app_phase"] = "RESULT"
             st.rerun()
 
-# =========================================================
-# PAGE 2 : RESULT DASHBOARD (Sandbox Mode)
-# =========================================================
-else:
+    else:
+        orig_img = st.session_state["orig_img"]
+        pts = st.session_state["detected_pts"]
+        
+        # Render the interactive JS cropper
+        html = get_cropper_html(orig_img, pts)
+        components.html(html, height=750, scrolling=False)
+
+# ---------------------------------------------------------
+# PHASE 3 : RESULT DASHBOARD
+# ---------------------------------------------------------
+elif st.session_state["app_phase"] == "RESULT":
     processed_img = st.session_state["processed_img"]
     raw_text = st.session_state["raw_text"]
     extracted_json = st.session_state["extracted_json"]
 
     has_error = (isinstance(extracted_json, dict) and "error" in extracted_json and extracted_json["error"])
-    action = st.query_params.get("triggered_event", "")
 
-    if action == "back":
+    if action == "edit":
         st.query_params.clear()
-        reset_app()
-        st.rerun()
-    elif action == "edit":
-        st.query_params.clear();
         st.toast("✏️ ระบบ: เปิดสิทธิ์ให้แก้ไขข้อความที่ OCR อ่านได้ (Editable Text)")
     elif action == "delete":
-        st.query_params.clear();
+        st.query_params.clear()
         st.toast("🗑️ ระบบ: ล้างข้อมูลจำลองบนหน้าจอเรียบร้อย")
     elif action == "copy":
-        st.query_params.clear();
+        st.query_params.clear()
         st.toast("📋 ระบบ: คัดลอกข้อมูลลง Clipboard")
     elif action == "share":
-        st.query_params.clear();
+        st.query_params.clear()
         st.toast("🔗 ระบบ: คัดลอกลิงก์แชร์เอกสารสำเร็จ")
     elif action == "maximize":
-        st.query_params.clear();
+        st.query_params.clear()
         st.toast("🔍 ระบบ: ขยายภาพเอกสารเต็มหน้าจอ")
-
     elif action == "export":
         st.query_params.clear()
-        # เปลี่ยนเป็นโชว์ Success แบบ Sandbox Mode แทนการบันทึกลง DB
         st.success(f"🎉 ประมวลผลและแยกหมวดหมู่เอกสารเสร็จสมบูรณ์ (พร้อมนำไปใช้งานต่อ)")
         st.balloons()
 
