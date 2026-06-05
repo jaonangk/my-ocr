@@ -150,12 +150,16 @@ def crop_document(image):
     dim = (int(image.shape[1] / ratio), int(height / ratio))
     resized = cv2.resize(image, dim)
 
-    # 2. แปลงเป็นขาวดำ และใช้ Bilateral Filter ลบพื้นผิวแต่ "รักษาความคมของขอบกระดาษ" ไว้
+    # 2. แปลงเป็นขาวดำ และใช้ GaussianBlur ลบ Noise เพื่อเตรียมการหาขอบ
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.bilateralFilter(gray, 9, 75, 75)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # 3. จับเส้นขอบด้วย Canny
-    edged = cv2.Canny(blurred, 30, 200)
+    # 3. จับเส้นขอบด้วย Canny แบบ Auto Thresholding (คำนวณ Threshold อัตโนมัติจากค่ามัธยฐาน)
+    v = np.median(blurred)
+    sigma = 0.33
+    lower = int(max(0, (1.0 - sigma) * v))
+    upper = int(min(255, (1.0 + sigma) * v))
+    edged = cv2.Canny(blurred, lower, upper)
 
     # 4. ทำให้เส้นขอบเชื่อมติดกัน (อุดรอยรั่วเวลาขอบกระดาษกลืนกับพื้น)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
@@ -168,21 +172,22 @@ def crop_document(image):
     if not contours:
         return orig
 
-    # เรียงขนาดจากใหญ่ไปเล็ก เอามาเช็กแค่ 5 อันแรก
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
+    # เรียงขนาดจากใหญ่ไปเล็ก เอามาเช็ก 10 อันแรก
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
     document_contour = None
     img_area = dim[0] * dim[1]
 
     for c in contours:
-        # ถ้าก้อนใหญ่สุดยังเล็กกว่า 5% ของภาพ แสดงว่าเป็นแค่ขยะ ไม่ใช่กระดาษ
-        if cv2.contourArea(c) < img_area * 0.05:
+        # ถ้าก้อนใหญ่สุดยังเล็กกว่า 1% ของภาพ (ลดจาก 5%) แสดงว่าเป็นแค่ขยะ ไม่ใช่กระดาษ
+        # ช่วยให้ครอบคลุมการถ่ายภาพมุมกว้าง (Wide-angle) ได้ดีขึ้น
+        if cv2.contourArea(c) < img_area * 0.01:
             continue
 
         peri = cv2.arcLength(c, True)
         
         # 🔥 ไม้ตาย: ค่อยๆ เพิ่มความยืดหยุ่นในการหามุม (epsilon)
-        # ถ้ากระดาษยับหรือโค้งงอ มันจะค่อยๆ อนุโลมจนกว่าจะเจอ 4 มุมเป๊ะๆ
-        for eps in [0.02, 0.03, 0.04, 0.05]:
+        # เพิ่มระยะ epsilon ให้ครอบคลุมกระดาษที่อาจจะยับหรือโค้งมากกว่าปกติ
+        for eps in [0.02, 0.03, 0.04, 0.05, 0.08, 0.1]:
             approx = cv2.approxPolyDP(c, eps * peri, True)
             if len(approx) == 4:
                 document_contour = approx
