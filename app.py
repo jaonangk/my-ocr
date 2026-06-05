@@ -18,6 +18,7 @@ from ocr_engine import (
     load_image_or_pdf,
     process_method_4_sharpening,
     run_typhoon_ocr,
+    crop_document,
 )
 
 # =========================================================
@@ -346,7 +347,7 @@ if "processed_img" not in st.session_state or st.session_state.get("file_uploade
             if img is None: st.error("❌ Unsupported file"); st.stop()
             
             # 1. ตัดรูปสิ่งของรอบๆ ออกให้เหลือเฉพาะเอกสาร (ตามโจทย์เป๊ะ)
-            cropped_img = crop_document_contour(img)
+            cropped_img = crop_document(img)
             
             # 2. แก้เอียงและเพิ่มความชัด
             deskewed = deskew_image(cropped_img)
