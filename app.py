@@ -20,7 +20,7 @@ from ocr_engine import (
     detect_document_corners,
     four_point_transform,
 )
-from cropper_ui import get_cropper_html
+from cropper_ui import st_cropper
 import numpy as np
 
 # =========================================================
@@ -165,27 +165,9 @@ def normalize_date(date_str):
         return date_str
 
 # =========================================================
-# 🔥 JAVASCRIPT MESSAGE TUNNEL
 # =========================================================
-st.markdown("""
-<script>
-    window.addEventListener('message', function(e) {
-        if (e.data && e.data.type === 'recalpt_action_v2') {
-            const url = new URL(window.parent.location.href);
-            url.searchParams.set("triggered_event", e.data.value);
-            if (e.data.points) {
-                url.searchParams.set("crop_pts", JSON.stringify(e.data.points));
-            }
-            window.parent.location.href = url.toString();
-        }
-        else if (e.data && e.data.type === 'recalpt_action') {
-            const url = new URL(window.parent.location.href);
-            url.searchParams.set("triggered_event", e.data.value);
-            window.parent.location.href = url.toString();
-        }
-    });
-</script>
-""", unsafe_allow_html=True)
+# (Removed fragile JS message tunnel as it's no longer needed)
+# =========================================================
 
 HTML_POST_BRIDGE = """<script>
 function executeAction(actValue) {
@@ -378,17 +360,14 @@ if st.session_state["app_phase"] == "UPLOAD":
 # PHASE 2 : INTERACTIVE CROP
 # ---------------------------------------------------------
 elif st.session_state["app_phase"] == "CROP":
-    if action == "crop_confirmed":
-        st.query_params.clear()
-        
-        import json
-        try:
-            pts_list = json.loads(crop_pts_json)
-            final_pts = np.array(pts_list, dtype="float32")
-        except Exception:
-            final_pts = st.session_state["detected_pts"]
-
-        orig_img = st.session_state["orig_img"]
+    orig_img = st.session_state["orig_img"]
+    pts = st.session_state["detected_pts"]
+    
+    # st_cropper returns None until the user confirms
+    final_pts = st_cropper(orig_img, pts, key="cropper")
+    
+    if final_pts is not None:
+        final_pts = np.array(final_pts, dtype="float32")
         
         with st.spinner("⏳ กำลังครอบตัด แก้เอียง และเพิ่มความชัด..."):
             warped = four_point_transform(orig_img, final_pts)
@@ -411,14 +390,6 @@ elif st.session_state["app_phase"] == "CROP":
                 st.session_state["extracted_json"] = extracted_json
                 st.session_state["app_phase"] = "RESULT"
             st.rerun()
-
-    else:
-        orig_img = st.session_state["orig_img"]
-        pts = st.session_state["detected_pts"]
-        
-        # Render the interactive JS cropper
-        html = get_cropper_html(orig_img, pts)
-        components.html(html, height=750, scrolling=False)
 
 # ---------------------------------------------------------
 # PHASE 3 : RESULT DASHBOARD
