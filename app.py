@@ -28,7 +28,7 @@ from cropper_ui import st_cropper
 import numpy as np
 
 try:
-    import fpdf
+    from fpdf import FPDF
     HAS_FPDF = True
 except ImportError:
     HAS_FPDF = False
@@ -266,7 +266,7 @@ def generate_pdf(processed_img, extracted_json):
         tmp_path = tmp.name
 
     try:
-        pdf = fpdf.FPDF()
+        pdf = FPDF()
 
         # --- Page 1: Image ---
         pdf.add_page()
