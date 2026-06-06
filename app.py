@@ -27,11 +27,8 @@ from ocr_engine import (
 from cropper_ui import st_cropper
 import numpy as np
 
-try:
-    from fpdf import FPDF
-    HAS_FPDF = True
-except ImportError:
-    HAS_FPDF = False
+
+
 
 # =========================================================
 # GLOBAL NATIVE CSS DESIGN
@@ -239,105 +236,6 @@ svg{{display:inline-block;vertical-align:middle;flex-shrink:0}}
 </div>
 </body></html>"""
 
-# =========================================================
-# PDF EXPORT
-# =========================================================
-def generate_pdf(processed_img, extracted_json):
-    """Build a PDF with cropped image on page 1 and extracted text on page 2."""
-    if not HAS_FPDF:
-        raise ImportError("fpdf2 not installed")
-
-    merchant = extracted_json.get("seller", {}).get("name", extracted_json.get("store_name", "—")) or "—"
-    receipt_no = extracted_json.get("document_number", extracted_json.get("receipt_no", "—")) or "—"
-    date_val = extracted_json.get("document_date", extracted_json.get("date", "—")) or "—"
-    receipt_type = extracted_json.get("document_type", "Receipt/Tax Invoice") or "Receipt/Tax Invoice"
-    items_list = extracted_json.get("items", []) or []
-    subtotal_val = safe_float(extracted_json.get("amount_before_tax", extracted_json.get("subtotal", 0)))
-    vat_val = safe_float(extracted_json.get("vat_amount", extracted_json.get("vat", 0)))
-    total_val = safe_float(extracted_json.get("grand_total", extracted_json.get("total", 0)))
-
-    # Convert image to RGB JPEG bytes
-    display_img = cv2.cvtColor(processed_img, cv2.COLOR_GRAY2RGB) if len(
-        processed_img.shape) == 2 else cv2.cvtColor(processed_img, cv2.COLOR_BGR2RGB)
-    _, img_buf = cv2.imencode('.jpg', display_img)
-
-    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-        tmp.write(img_buf.tobytes())
-        tmp_path = tmp.name
-
-    try:
-        pdf = FPDF()
-
-        # --- Page 1: Image ---
-        pdf.add_page()
-        img_h, img_w = processed_img.shape[:2]
-        page_w = pdf.w - 20
-        page_h_avail = pdf.h - 20
-        scale = min(page_w / img_w, page_h_avail / img_h)
-        draw_w = img_w * scale
-        draw_h = img_h * scale
-        x_offset = (pdf.w - draw_w) / 2
-        pdf.image(tmp_path, x=x_offset, y=10, w=draw_w, h=draw_h)
-
-        # --- Page 2: Text ---
-        pdf.add_page()
-        pdf.set_font('Helvetica', 'B', 16)
-        pdf.cell(0, 10, 'Document OCR Result', ln=True, align='C')
-        pdf.ln(4)
-
-        def safe_str(s):
-            return str(s).encode('latin-1', 'replace').decode('latin-1')
-
-        rows = [
-            ('Type', receipt_type),
-            ('Merchant', merchant),
-            ('Document No', receipt_no),
-            ('Date', date_val),
-        ]
-        for label, val in rows:
-            pdf.set_font('Helvetica', 'B', 11)
-            pdf.cell(50, 8, f'{label}:', ln=False)
-            pdf.set_font('Helvetica', '', 11)
-            pdf.cell(0, 8, safe_str(val), ln=True)
-
-        pdf.ln(4)
-        pdf.set_draw_color(200, 180, 190)
-        pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
-        pdf.ln(6)
-
-        # Items table
-        pdf.set_font('Helvetica', 'B', 10)
-        pdf.set_fill_color(255, 240, 245)
-        pdf.cell(12, 8, '#', border=1, fill=True, align='C')
-        pdf.cell(80, 8, 'Description', border=1, fill=True)
-        pdf.cell(18, 8, 'Qty', border=1, fill=True, align='C')
-        pdf.cell(30, 8, 'Unit Price', border=1, fill=True, align='R')
-        pdf.cell(0, 8, 'Amount', border=1, fill=True, align='R', ln=True)
-
-        pdf.set_font('Helvetica', '', 10)
-        for idx, item in enumerate(items_list):
-            name = item.get("item_description", item.get("name", "—"))
-            qty = safe_int(item.get("quantity", item.get("qty", 1)))
-            price = safe_float(item.get("unit_price", 0))
-            amt = safe_float(item.get("subtotal", qty * price))
-            pdf.cell(12, 7, str(idx + 1), border='B', align='C')
-            pdf.cell(80, 7, safe_str(name), border='B')
-            pdf.cell(18, 7, str(qty), border='B', align='C')
-            pdf.cell(30, 7, f'{price:,.2f}', border='B', align='R')
-            pdf.cell(0, 7, f'{amt:,.2f}', border='B', align='R', ln=True)
-
-        pdf.ln(4)
-        if subtotal_val:
-            pdf.set_font('Helvetica', '', 10)
-            pdf.cell(0, 7, f'Subtotal (before VAT): {subtotal_val:,.2f}', align='R', ln=True)
-        if vat_val:
-            pdf.cell(0, 7, f'VAT: {vat_val:,.2f}', align='R', ln=True)
-        pdf.set_font('Helvetica', 'B', 12)
-        pdf.cell(0, 9, f'Total: {total_val:,.2f}', align='R', ln=True)
-
-        return pdf.output(dest='S').encode('latin-1')
-    finally:
-        os.unlink(tmp_path)
 
 # =========================================================
 # PAGE ROUTING (STATE MACHINE)
@@ -435,26 +333,7 @@ elif st.session_state["app_phase"] == "RESULT":
             st.error(f"❌ {extracted_json['error']}")
         else:
             items_count = len(extracted_json.get("items", []) or [])
-            # Card height: base 300px + 40px per item row + fixed totals section
             card_height = 300 + (items_count * 40) + 100
             components.html(build_detail_card_html(extracted_json), height=card_height, scrolling=False)
-
-            # Export PDF — native download button (no iframe)
-            if HAS_FPDF:
-                try:
-                    pdf_bytes = generate_pdf(processed_img, extracted_json)
-                    st.download_button(
-                        label="⬇️ ส่งออก PDF (ภาพ + รายละเอียด)",
-                        data=pdf_bytes,
-                        file_name="ocr_document.pdf",
-                        mime="application/pdf",
-                        use_container_width=True,
-                        type="primary",
-                        key="export_pdf_btn"
-                    )
-                except Exception as e:
-                    st.warning(f"ไม่สามารถสร้าง PDF ได้: {e}")
-            else:
-                st.info("ติดตั้ง fpdf2 เพื่อใช้ฟีเจอร์ส่งออก PDF: `pip install fpdf2`")
 
     st.markdown('</div>', unsafe_allow_html=True)
