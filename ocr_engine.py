@@ -70,7 +70,7 @@ def run_typhoon_ocr(image_np):
     """Compress and send the preprocessed image to Typhoon OCR API."""
     url = "https://api.opentyphoon.ai/v1/ocr"
     
-    # 🔑 ดึง API Key อย่างปลอดภัยจาก Secrets ของ Streamlit
+    # ดึง API Key อย่างปลอดภัยจาก Secrets ของ Streamlit
     api_key = st.secrets["OPENTYPHOON_API_KEY"]
 
     _, encoded_img = cv2.imencode(".jpg", image_np, [cv2.IMWRITE_JPEG_QUALITY, 75])
@@ -138,88 +138,101 @@ def four_point_transform(image, pts):
 
 def detect_document_corners(image):
     """
-    Smart Document Corner Detection
-    ใช้หลายเทคนิค (Multi-strategy) เพื่อหาพิกัด 4 มุมของเอกสาร
+    Smart Document Corner Detection — Multi-strategy approach.
+
+    Strategy 0: Bright-region detection — ค้นหากระดาษสีขาวบนพื้นหลังสีเข้ม
+                 ทำงานดีมากกับภาพถ่ายบนโต๊ะ
+    Strategy 1-3: Edge/threshold-based contour detection
+    Fallback A: Bounding box ของ contour ที่ใหญ่ที่สุด (ปรับ padding)
+    Fallback B: สี่เหลี่ยมหดเข้าจากขอบ 10% — ไม่มีทางได้ full frame
     """
-    height = image.shape[0]
-    width = image.shape[1]
-    ratio = height / 800.0
-    if ratio < 1: ratio = 1
+    height, width = image.shape[:2]
+    ratio = max(1.0, height / 900.0)
     dim = (int(width / ratio), int(height / ratio))
     resized = cv2.resize(image, dim)
-
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
     img_area = dim[0] * dim[1]
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
 
+    def scale_pts(pts_4x2):
+        return order_points(np.array(pts_4x2, dtype="float32") * ratio)
+
+    # ── Strategy 0: Bright-region (white paper on dark background) ──
+    _, bright = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
+    bright = cv2.morphologyEx(
+        bright, cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15)), iterations=3)
+    bright = cv2.morphologyEx(
+        bright, cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (10, 10)), iterations=2)
+    bright_cnts, _ = cv2.findContours(bright, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if bright_cnts:
+        bright_cnts = sorted(bright_cnts, key=cv2.contourArea, reverse=True)
+        for c in bright_cnts:
+            area = cv2.contourArea(c)
+            if area < img_area * 0.05:
+                break
+            hull = cv2.convexHull(c)
+            peri = cv2.arcLength(hull, True)
+            for eps in [0.02, 0.03, 0.05, 0.07, 0.10]:
+                approx = cv2.approxPolyDP(hull, eps * peri, True)
+                if len(approx) == 4:
+                    return scale_pts(approx.reshape(4, 2))
+            # Large bright blob but no clean 4-corner polygon → use bounding rect
+            if area > img_area * 0.15:
+                x, y, w, h = cv2.boundingRect(c)
+                pts = np.array([[x, y], [x+w, y], [x+w, y+h], [x, y+h]], dtype="float32")
+                return scale_pts(pts)
+
+    # ── Strategies 1-3: Edge detection ──
     v = np.median(cv2.GaussianBlur(gray, (5, 5), 0))
-    lower_canny = int(max(0, (1.0 - 0.33) * v))
-    upper_canny = int(min(255, (1.0 + 0.33) * v))
+    lo = int(max(0, 0.67 * v))
+    hi = int(min(255, 1.33 * v))
 
     strategies = [
-        lambda g: cv2.Canny(cv2.GaussianBlur(g, (5, 5), 0), lower_canny, upper_canny),
+        lambda g: cv2.Canny(cv2.GaussianBlur(g, (5, 5), 0), lo, hi),
         lambda g: cv2.Canny(cv2.bilateralFilter(g, 9, 75, 75), 30, 200),
-        lambda g: cv2.adaptiveThreshold(cv2.GaussianBlur(g, (5, 5), 0), 255, 
-                                        cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+        lambda g: cv2.adaptiveThreshold(
+            cv2.GaussianBlur(g, (5, 5), 0), 255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2),
     ]
-
-    document_contour = None
 
     for strat in strategies:
         edged = strat(gray)
         dilated = cv2.dilate(edged, kernel, iterations=2)
         closed = cv2.erode(dilated, kernel, iterations=1)
-
         contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             continue
-
         contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
-        
         for c in contours:
-            if cv2.contourArea(c) < img_area * 0.01:
+            if cv2.contourArea(c) < img_area * 0.05:
                 continue
-
             hull = cv2.convexHull(c)
             peri = cv2.arcLength(hull, True)
-            
-            for eps in [0.02, 0.03, 0.04, 0.05, 0.08, 0.1]:
+            for eps in [0.02, 0.03, 0.04, 0.05, 0.08, 0.10]:
                 approx = cv2.approxPolyDP(hull, eps * peri, True)
                 if len(approx) == 4:
-                    document_contour = approx
-                    break
-            
-            if document_contour is not None:
-                break
-                
-        if document_contour is not None:
-            break
+                    return scale_pts(approx.reshape(4, 2))
 
-    if document_contour is not None:
-        pts = document_contour.reshape(4, 2) * ratio
-        return order_points(pts)
+    # ── Fallback A: Bounding box of largest contour ──
+    edged_fb = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), lo, hi)
+    dilated_fb = cv2.dilate(edged_fb, kernel, iterations=3)
+    closed_fb = cv2.erode(dilated_fb, kernel, iterations=1)
+    contours_fb, _ = cv2.findContours(closed_fb, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours_fb:
+        c = max(contours_fb, key=cv2.contourArea)
+        if cv2.contourArea(c) > img_area * 0.05:
+            x, y, w, h = cv2.boundingRect(c)
+            pad = int(min(w, h) * 0.01)
+            x1 = max(0, x - pad);  y1 = max(0, y - pad)
+            x2 = min(dim[0], x+w+pad);  y2 = min(dim[1], y+h+pad)
+            pts = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype="float32")
+            return scale_pts(pts)
 
-    # 🚨 แผนสำรอง: Bounding Box
-    edged = strategies[0](gray)
-    dilated = cv2.dilate(edged, kernel, iterations=2)
-    closed = cv2.erode(dilated, kernel, iterations=1)
-    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if contours:
-        contours = sorted(contours, key=cv2.contourArea, reverse=True)[:1]
-        c = contours[0]
-        x, y, w, h = cv2.boundingRect(c)
-        x, y, w, h = int(x * ratio), int(y * ratio), int(w * ratio), int(h * ratio)
-        
-        pad_x = int(w * 0.01)
-        pad_y = int(h * 0.01)
-        x1 = max(0, x - pad_x)
-        y1 = max(0, y - pad_y)
-        x2 = min(width, x + w + pad_x)
-        y2 = min(height, y + h + pad_y)
-        
-        pts = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype="float32")
-        return order_points(pts)
-
-    pts = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype="float32")
+    # ── Fallback B: 10% inset rectangle — never returns full frame ──
+    mx = int(width * 0.10)
+    my = int(height * 0.10)
+    pts = np.array([[mx, my], [width-mx, my],
+                    [width-mx, height-my], [mx, height-my]], dtype="float32")
     return order_points(pts)
