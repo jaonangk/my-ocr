@@ -93,12 +93,12 @@ header, footer, #MainMenu,
 }
 
 /* ── Result wrapper ── */
-.result-wrapper {
+[data-testid="stHorizontalBlock"] { 
     background:#FFFFFF; border-radius:32px; padding:35px;
     max-width:1450px; margin:0 auto !important;
     box-shadow:0 12px 40px rgba(74,46,53,0.04);
+    gap:30px !important; align-items:flex-start !important; 
 }
-[data-testid="stHorizontalBlock"] { gap:30px !important; align-items:flex-start !important; }
 .img-card-wrap {
     background:#F5F5F5; border-radius:24px;
     overflow:hidden; border:1px solid #F8D7E3;
@@ -313,7 +313,6 @@ elif st.session_state["app_phase"] == "RESULT":
 
     has_error = (isinstance(extracted_json, dict) and "error" in extracted_json and extracted_json["error"])
 
-    st.markdown('<div class="result-wrapper">', unsafe_allow_html=True)
     col_left, col_right = st.columns([1, 1], gap="large")
 
     with col_left:
@@ -335,5 +334,3 @@ elif st.session_state["app_phase"] == "RESULT":
             items_count = len(extracted_json.get("items", []) or [])
             card_height = 300 + (items_count * 40) + 100
             components.html(build_detail_card_html(extracted_json), height=card_height, scrolling=False)
-
-    st.markdown('</div>', unsafe_allow_html=True)
