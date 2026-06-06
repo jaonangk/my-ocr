@@ -152,7 +152,7 @@ html_content = """
             <div class="crosshair"></div>
         </div>
     </div>
-    <div class="hint">คุณสามารถลากจุดวงกลมทั้ง 4 มุม เพื่อปรับขอบกระดาษให้ตรงเป๊ะได้เหมือนแอปสแกนเนอร์มือถือ</div>
+    <div class="hint">คุณสามารถลากจุดวงกลมทั้ง 4 มุม เพื่อปรับขอบกระดาษ</div>
 
     <script>
         function sendMessageToStreamlitClient(type, data) {

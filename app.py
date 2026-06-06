@@ -360,7 +360,7 @@ svg{{display:inline-block;vertical-align:middle;flex-shrink:0}}
 </style>
 </head><body>
 <div class="card" id="card">
-  <div class="dc-title">📋 รายละเอียดเอกสาร (OCR Categorized)</div>
+  <div class="dc-title">📋 รายละเอียดเอกสาร </div>
   <div>
     <span class="badge">{receipt_type}</span>
     <div class="info-row"><span class="lbl">หัวข้อ / ร้านค้า :</span><span class="val">{merchant}</span></div>
