@@ -422,7 +422,7 @@ if st.session_state["app_phase"] == "UPLOAD":
                 <div class="app-logo-sub">OCR Document Categorizer</div>
             </div>
         </div>
-        <div class="header-badge">✨ Powered by Typhoon OCR</div>
+        <div class="header-badge">✨ Typhoon OCR</div>
     </div>
     """, unsafe_allow_html=True)
 
