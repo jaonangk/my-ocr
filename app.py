@@ -426,19 +426,7 @@ if st.session_state["app_phase"] == "UPLOAD":
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("""
-    <div class="hero-wrap">
-        <div class="hero-icon-ring">🔍</div>
-        <h1 class="hero-title">สแกนเอกสารอัจฉริยะ<br><span>ด้วย AI</span></h1>
-        <p class="hero-subtitle">ถ่ายภาพเอกสารมุมกว้าง ระบบจะตรวจจับขอบเอกสารให้อัตโนมัติ<br>แล้วอ่านและจัดหมวดหมู่ข้อมูลด้วย OCR + AI</p>
-        <div class="feature-pills">
-            <span class="pill">📐 ตัดขอบอัตโนมัติ</span>
-            <span class="pill">🔤 OCR แม่นยำ</span>
-            <span class="pill">🤖 จัดหมวดหมู่ด้วย AI</span>
-            <span class="pill">🧾 รองรับ PDF</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
 
     uploaded_file = st.file_uploader("", type=["jpg", "jpeg", "png", "pdf"],
                                      key="uploader_widget", label_visibility="collapsed")
