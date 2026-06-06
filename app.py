@@ -10,7 +10,8 @@ import streamlit.components.v1 as components
 # PAGE CONFIG
 # =========================================================
 st.set_page_config(
-    page_title="RecAipt - Receipt scanning tools",
+    page_title="RecAipt — OCR Document Categorizer",
+    page_icon="📄",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -27,14 +28,13 @@ from ocr_engine import (
 from cropper_ui import st_cropper
 import numpy as np
 
-
-
-
 # =========================================================
-# GLOBAL NATIVE CSS DESIGN
+# GLOBAL CSS — Premium Design
 # =========================================================
 st.markdown("""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
 header, footer, #MainMenu,
 [data-testid="stToolbar"],
 [data-testid="stSidebar"] {
@@ -42,76 +42,202 @@ header, footer, #MainMenu,
     display: none !important;
     height: 0 !important;
 }
-.stApp { background-color: #FFF2F6 !important; }
-.block-container { max-width:100% !important; padding:1.5rem 3rem !important; }
 
+*, *::before, *::after { box-sizing: border-box; }
+
+.stApp {
+    background: linear-gradient(145deg, #FEF0F5 0%, #FFF5F8 40%, #FEF7FF 100%) !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+}
+.block-container { max-width:100% !important; padding:0 2.5rem 2rem !important; }
+
+/* ── Top Header Bar ── */
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 32px;
+    margin-bottom: 0;
+    background: rgba(255,255,255,0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(201,125,152,0.15);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+.app-logo {
+    display: flex; align-items: center; gap: 10px;
+}
+.app-logo-icon {
+    width: 36px; height: 36px;
+    background: linear-gradient(135deg, #E8829F, #C97D98);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; box-shadow: 0 4px 12px rgba(201,125,152,0.4);
+}
+.app-logo-text {
+    font-size: 20px; font-weight: 800; letter-spacing: -0.5px;
+    background: linear-gradient(135deg, #A35271, #C97D98);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.app-logo-sub {
+    font-size: 11px; color: #C29BA4; font-weight: 400; margin-top: -2px;
+}
+.header-badge {
+    background: linear-gradient(135deg, #FFF0F5, #FFE4EE);
+    border: 1px solid #F4C6D5;
+    color: #A35271; font-size: 12px; font-weight: 600;
+    padding: 6px 14px; border-radius: 20px;
+    letter-spacing: 0.3px;
+}
+
+/* ── Hero Section ── */
+.hero-wrap {
+    text-align: center;
+    padding: 60px 20px 48px;
+}
+.hero-icon-ring {
+    width: 80px; height: 80px;
+    background: linear-gradient(135deg, #FFE4EE, #FFF0F5);
+    border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 36px; margin-bottom: 24px;
+    box-shadow: 0 8px 24px rgba(201,125,152,0.2);
+    animation: float 3s ease-in-out infinite;
+}
+@keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
 .hero-title {
-    text-align:center; color:#4A2E35;
-    font-size:32px; font-weight:500; margin:35px 0 10px;
+    color: #3D1F28;
+    font-size: 38px; font-weight: 800; margin: 0 0 12px;
+    letter-spacing: -1px; line-height: 1.2;
+}
+.hero-title span {
+    background: linear-gradient(135deg, #A35271, #D4729A);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
 }
 .hero-subtitle {
-    text-align:center; color:#C29BA4;
-    font-size:15px; margin-bottom:45px;
+    color: #B5909A;
+    font-size: 16px; font-weight: 400; margin: 0 auto;
+    max-width: 520px; line-height: 1.6;
+}
+
+/* ── Feature Pills ── */
+.feature-pills {
+    display: flex; justify-content: center; gap: 10px;
+    flex-wrap: wrap; margin-top: 24px;
+}
+.pill {
+    background: rgba(255,255,255,0.9);
+    border: 1px solid rgba(201,125,152,0.25);
+    color: #A35271; font-size: 12px; font-weight: 500;
+    padding: 6px 14px; border-radius: 20px;
+    display: inline-flex; align-items: center; gap: 5px;
+    box-shadow: 0 2px 8px rgba(74,46,53,0.05);
 }
 
 /* ── Upload Zone ── */
 [data-testid="stFileUploader"] {
-    max-width:780px !important; margin:0 auto !important; display:block !important;
+    max-width: 720px !important; margin: 0 auto !important; display: block !important;
 }
 [data-testid="stFileUploaderDropzone"] {
-    background:#FFFFFF !important;
-    border:2px dashed #F4C6D5 !important;
-    border-radius:28px !important;
-    min-height:220px !important;
-    display:flex !important; flex-direction:column !important;
-    align-items:center !important; justify-content:center !important;
-    padding:40px 30px !important;
-    box-shadow:0 12px 35px rgba(74,46,53,0.03) !important;
-    cursor:pointer !important;
+    background: rgba(255,255,255,0.95) !important;
+    border: 2px dashed #E8A8C0 !important;
+    border-radius: 28px !important;
+    min-height: 200px !important;
+    display: flex !important; flex-direction: column !important;
+    align-items: center !important; justify-content: center !important;
+    padding: 40px 30px !important;
+    box-shadow: 0 16px 48px rgba(201,125,152,0.08) !important;
+    cursor: pointer !important;
+    transition: border-color 0.2s, box-shadow 0.2s !important;
 }
-[data-testid="stFileUploaderDropzone"] svg { display:none !important; }
+[data-testid="stFileUploaderDropzone"]:hover {
+    border-color: #C97D98 !important;
+    box-shadow: 0 20px 56px rgba(201,125,152,0.14) !important;
+}
+[data-testid="stFileUploaderDropzone"] svg { display: none !important; }
 [data-testid="stFileUploaderDropzoneInstructions"] > div > span,
-[data-testid="stFileUploaderDropzoneInstructions"] > div > small { display:none !important; }
+[data-testid="stFileUploaderDropzoneInstructions"] > div > small { display: none !important; }
 [data-testid="stFileUploaderDropzoneInstructions"] {
-    display:flex !important; flex-direction:column !important;
-    align-items:center;
+    display: flex !important; flex-direction: column !important;
+    align-items: center;
 }
 [data-testid="stFileUploaderDropzoneInstructions"]::before {
-    content:"📄"; font-size:44px; line-height:1;
-    margin-bottom:14px; display:block;
+    content: "📄"; font-size: 48px; line-height: 1;
+    margin-bottom: 16px; display: block;
+    filter: drop-shadow(0 4px 8px rgba(201,125,152,0.3));
 }
 [data-testid="stFileUploaderDropzoneInstructions"]::after {
-    content:"Choose or paste a file here (image or PDF)";
-    color:#A3858C; font-size:15px; display:block;
-    margin-top:10px; text-align:center;
+    content: "วางหรือคลิกเพื่ออัปโหลดภาพเอกสาร หรือ PDF";
+    color: #B5909A; font-size: 15px; display: block;
+    margin-top: 10px; text-align: center;
+    font-family: 'Inter', sans-serif; font-weight: 400;
 }
-[data-testid="stFileUploader"] label { display:none !important; }
+[data-testid="stFileUploader"] label { display: none !important; }
 [data-testid="stFileUploaderDropzoneInputButton"] {
-    opacity:0 !important; position:absolute !important;
-    width:100% !important; height:100% !important;
-    top:0 !important; left:0 !important; cursor:pointer !important;
+    opacity: 0 !important; position: absolute !important;
+    width: 100% !important; height: 100% !important;
+    top: 0 !important; left: 0 !important; cursor: pointer !important;
 }
 
-/* ── Result wrapper ── */
-[data-testid="stHorizontalBlock"] { 
-    background:#FFFFFF; border-radius:32px; padding:35px;
-    max-width:1450px; margin:0 auto !important;
-    box-shadow:0 12px 40px rgba(74,46,53,0.04);
-    gap:30px !important; align-items:flex-start !important; 
+/* ── Result columns wrapper ── */
+[data-testid="stHorizontalBlock"] {
+    background: rgba(255,255,255,0.92);
+    backdrop-filter: blur(8px);
+    border-radius: 32px;
+    padding: 32px;
+    max-width: 1450px;
+    margin: 0 auto !important;
+    box-shadow: 0 20px 60px rgba(74,46,53,0.07), 0 4px 16px rgba(74,46,53,0.04);
+    gap: 28px !important;
+    align-items: flex-start !important;
+    border: 1px solid rgba(255,255,255,0.8);
 }
+
+/* ── Image card ── */
 .img-card-wrap {
-    background:#F5F5F5; border-radius:24px;
-    overflow:hidden; border:1px solid #F8D7E3;
+    background: linear-gradient(145deg, #F8F4F5, #F2ECEE);
+    border-radius: 20px;
+    overflow: hidden;
+    border: 1px solid rgba(201,125,152,0.2);
+    box-shadow: inset 0 2px 8px rgba(74,46,53,0.04);
 }
-[data-testid="stHtml"] { padding:0 !important; margin:0 !important; }
-iframe { display:block !important; margin:0 auto !important; border-radius:24px !important; }
-[data-testid="stElementToolbar"] {display:none !important;}
-button[title="View fullscreen"] {display:none !important;}
+
+/* ── Streamlit back button styling ── */
+[data-testid="stBaseButton-secondary"] {
+    background: rgba(255,255,255,0.9) !important;
+    border: 1.5px solid #E8A8C0 !important;
+    color: #A35271 !important;
+    border-radius: 12px !important;
+    font-weight: 600 !important;
+    font-size: 13px !important;
+    padding: 8px 20px !important;
+    box-shadow: 0 2px 8px rgba(201,125,152,0.12) !important;
+    transition: all 0.2s !important;
+    margin-top: 12px !important;
+}
+[data-testid="stBaseButton-secondary"]:hover {
+    background: #FFF0F5 !important;
+    border-color: #C97D98 !important;
+    box-shadow: 0 4px 14px rgba(201,125,152,0.22) !important;
+    transform: translateY(-1px) !important;
+}
+
+/* ── Spinner color ── */
+[data-testid="stSpinner"] { color: #C97D98 !important; }
+
+[data-testid="stHtml"] { padding: 0 !important; margin: 0 !important; }
+iframe { display: block !important; width: 100% !important; border: none !important; }
+[data-testid="stElementToolbar"] { display: none !important; }
+button[title="View fullscreen"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================================================
-# HELPERS & DATE FORMAT NORMALIZER
+# HELPERS
 # =========================================================
 def reset_app():
     for key in list(st.session_state.keys()):
@@ -160,7 +286,7 @@ def normalize_date(date_str):
 SVG_BOX = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#C97D98" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>'
 
 # =========================================================
-# DETAIL CARD (iframe-based for HTML layout)
+# DETAIL CARD — auto-resizes iframe via ResizeObserver
 # =========================================================
 def build_detail_card_html(extracted_json):
     merchant = extracted_json.get("seller", {}).get("name", extracted_json.get("store_name", "—")) or "—"
@@ -178,52 +304,75 @@ def build_detail_card_html(extracted_json):
         qty = safe_int(item.get("quantity", item.get("qty", 1)))
         price = safe_float(item.get("unit_price", 0))
         amt = safe_float(item.get("subtotal", qty * price))
-        rows_html += f"<tr><td class='num'>{idx + 1}</td><td>{name}</td><td>{qty}</td><td>{price:,.2f}</td><td style='text-align:right'>{amt:,.2f}</td></tr>"
+        rows_html += f"<tr><td class='num'>{idx + 1}</td><td>{name}</td><td>{qty}</td><td>{price:,.2f}</td><td class='amt'>{amt:,.2f}</td></tr>"
 
     if not rows_html:
-        rows_html = '<tr><td colspan="5" style="text-align:center;color:#C29BA4;padding:16px 0">ไม่พบรายการสินค้า</td></tr>'
+        rows_html = '<tr><td colspan="5" class="empty">ไม่พบรายการสินค้า</td></tr>'
 
     subtotal_row = f'<div class="t-row"><span>ยอดก่อน VAT :</span><span>{subtotal_val:,.2f} บาท</span></div>' if subtotal_val else ""
     vat_row = f'<div class="t-row"><span>VAT :</span><span>{vat_val:,.2f} บาท</span></div>' if vat_val else ""
 
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:transparent;padding:2px}}
+html,body{{height:auto;overflow:hidden}}
+body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:transparent;padding:2px}}
 svg{{display:inline-block;vertical-align:middle;flex-shrink:0}}
-.card{{background:#FFF6F8;border-radius:24px;border:1px solid #F8D7E3;padding:24px 28px}}
-.dc-title{{font-size:17px;font-weight:700;color:#4A2E35;text-align:center;margin-bottom:20px}}
-.badge{{display:inline-block;background:#FFF0F5;color:#A35271;border:1px solid #F4C6D5;border-radius:8px;font-size:12px;padding:4px 12px;margin-bottom:16px}}
-.info-row{{display:flex;gap:8px;font-size:13px;margin-bottom:12px;align-items:baseline}}
-.lbl{{color:#7A5A63;min-width:130px;flex-shrink:0;font-weight:500}}
-.val{{color:#4A2E35;font-weight:600}}
-.divider{{border:none;border-top:1px solid #F4E0E8;margin:16px 0}}
-.sec-lbl{{font-size:13px;color:#4A2E35;font-weight:bold;margin-bottom:12px;display:flex;align-items:center;gap:6px}}
-.tbl{{width:100%;border-collapse:collapse;font-size:13px}}
-.tbl th{{color:#C29BA4;font-weight:400;padding:4px 6px 9px;border-bottom:1px solid #F4E0E8;text-align:center}}
+.card{{
+  background:linear-gradient(160deg,#FFF8FA,#FFF4F7);
+  border-radius:22px;
+  border:1px solid rgba(201,125,152,0.2);
+  padding:24px 26px 20px;
+  box-shadow:0 4px 20px rgba(74,46,53,0.06);
+}}
+.dc-title{{
+  font-size:15px;font-weight:700;color:#3D1F28;
+  text-align:center;margin-bottom:18px;
+  letter-spacing:-0.2px;
+}}
+.badge{{
+  display:inline-block;
+  background:linear-gradient(135deg,#FFF0F5,#FFE8F0);
+  color:#A35271;border:1px solid rgba(201,125,152,0.35);
+  border-radius:20px;font-size:11.5px;font-weight:600;
+  padding:4px 14px;margin-bottom:16px;
+  letter-spacing:0.2px;
+}}
+.info-row{{display:flex;gap:8px;font-size:13px;margin-bottom:10px;align-items:flex-start;line-height:1.5}}
+.lbl{{color:#9A7080;min-width:130px;flex-shrink:0;font-weight:500}}
+.val{{color:#3D1F28;font-weight:600;flex:1}}
+.divider{{border:none;border-top:1px solid rgba(201,125,152,0.18);margin:14px 0}}
+.sec-lbl{{font-size:12.5px;color:#5C3040;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px;text-transform:uppercase;letter-spacing:0.4px}}
+.tbl{{width:100%;border-collapse:collapse;font-size:12.5px}}
+.tbl th{{color:#B899A5;font-weight:500;padding:4px 6px 8px;border-bottom:1px solid rgba(201,125,152,0.2);text-align:center;font-size:11.5px;letter-spacing:0.3px}}
 .tbl th:nth-child(2){{text-align:left}}
-.tbl td{{padding:8px 6px;color:#4A2E35;text-align:center;border-bottom:1px dashed #FFF0F5}}
-.tbl td:nth-child(2){{text-align:left}}
-.num{{color:#C29BA4;font-size:12px}}
-.totals{{padding-top:14px}}
-.t-row{{display:flex;justify-content:space-between;font-size:13px;color:#A07A85;margin-bottom:8px}}
-.grand{{color:#4A2E35;font-weight:700;font-size:15px}}
+.tbl td{{padding:8px 6px;color:#3D1F28;text-align:center;border-bottom:1px solid rgba(255,240,245,0.8)}}
+.tbl td:nth-child(2){{text-align:left;font-weight:500}}
+.tbl tr:last-child td{{border-bottom:none}}
+.num{{color:#C9A0B0;font-size:11.5px;font-weight:400}}
+.amt{{text-align:right!important;font-weight:600;color:#5C3040}}
+.empty{{text-align:center;color:#C29BA4;padding:16px 0;font-size:12px}}
+.totals{{padding-top:12px;background:linear-gradient(135deg,rgba(255,240,245,0.6),rgba(255,248,250,0.6));border-radius:12px;padding:12px 14px;margin-top:4px}}
+.t-row{{display:flex;justify-content:space-between;font-size:12.5px;color:#9A7080;margin-bottom:6px}}
+.t-row:last-child{{margin-bottom:0}}
+.grand{{color:#3D1F28;font-weight:700;font-size:14px;border-top:1.5px solid rgba(201,125,152,0.25);padding-top:10px;margin-top:4px}}
 </style>
 </head><body>
-<div class="card">
-  <div class="dc-title">รายละเอียดเอกสาร (OCR Categorized)</div>
-  <div class="dc-body">
+<div class="card" id="card">
+  <div class="dc-title">📋 รายละเอียดเอกสาร (OCR Categorized)</div>
+  <div>
     <span class="badge">{receipt_type}</span>
     <div class="info-row"><span class="lbl">หัวข้อ / ร้านค้า :</span><span class="val">{merchant}</span></div>
     <div class="info-row"><span class="lbl">เลขที่เอกสาร :</span><span class="val">{receipt_no}</span></div>
     <div class="info-row"><span class="lbl">วันที่ :</span><span class="val">{date_val}</span></div>
     <hr class="divider">
-    <div class="sec-lbl">{SVG_BOX} รายละเอียดที่สกัดได้</div>
+    <div class="sec-lbl">{SVG_BOX}&nbsp;รายละเอียดที่สกัดได้</div>
     <table class="tbl">
       <thead><tr>
-        <th style="width:32px">ลำดับ</th><th>รายการ</th>
-        <th style="width:50px">จำนวน</th><th style="width:60px">ราคา</th>
-        <th style="width:60px;text-align:right">รวม</th>
+        <th style="width:30px">No.</th><th>รายการ</th>
+        <th style="width:45px">จำนวน</th><th style="width:65px">ราคา</th>
+        <th style="width:65px">รวม</th>
       </tr></thead>
       <tbody>{rows_html}</tbody>
     </table>
@@ -234,23 +383,65 @@ svg{{display:inline-block;vertical-align:middle;flex-shrink:0}}
     </div>
   </div>
 </div>
+<script>
+// Auto-report height to parent so Streamlit can resize the iframe
+function reportHeight() {{
+    var h = document.getElementById('card').getBoundingClientRect().height + 8;
+    window.parent.postMessage({{type:'recaipt_card_height', height: h}}, '*');
+}}
+if (document.readyState === 'complete') {{
+    reportHeight();
+}} else {{
+    window.addEventListener('load', reportHeight);
+}}
+if (typeof ResizeObserver !== 'undefined') {{
+    new ResizeObserver(reportHeight).observe(document.getElementById('card'));
+}}
+</script>
 </body></html>"""
 
-
 # =========================================================
-# PAGE ROUTING (STATE MACHINE)
+# PAGE ROUTING
 # =========================================================
 if "app_phase" not in st.session_state:
     st.session_state["app_phase"] = "UPLOAD"
+if "card_height" not in st.session_state:
+    st.session_state["card_height"] = 400
 
 # ---------------------------------------------------------
 # PHASE 1 : UPLOAD
 # ---------------------------------------------------------
 if st.session_state["app_phase"] == "UPLOAD":
-    st.markdown("<div class='hero-title'>OCR Document Categorizer</div>", unsafe_allow_html=True)
-    st.markdown("<div class='hero-subtitle'>ถ่ายภาพเอกสารมุมกว้าง ระบบจะพยายามหาขอบให้ และให้คุณปรับแก้ด้วยตัวเองได้ก่อนสแกน</div>", unsafe_allow_html=True)
+    # Header
+    st.markdown("""
+    <div class="app-header">
+        <div class="app-logo">
+            <div class="app-logo-icon">📄</div>
+            <div>
+                <div class="app-logo-text">RecAipt</div>
+                <div class="app-logo-sub">OCR Document Categorizer</div>
+            </div>
+        </div>
+        <div class="header-badge">✨ Powered by Typhoon OCR</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader("", type=["jpg", "jpeg", "png", "pdf"], key="uploader_widget", label_visibility="collapsed")
+    st.markdown("""
+    <div class="hero-wrap">
+        <div class="hero-icon-ring">🔍</div>
+        <h1 class="hero-title">สแกนเอกสารอัจฉริยะ<br><span>ด้วย AI</span></h1>
+        <p class="hero-subtitle">ถ่ายภาพเอกสารมุมกว้าง ระบบจะตรวจจับขอบเอกสารให้อัตโนมัติ<br>แล้วอ่านและจัดหมวดหมู่ข้อมูลด้วย OCR + AI</p>
+        <div class="feature-pills">
+            <span class="pill">📐 ตัดขอบอัตโนมัติ</span>
+            <span class="pill">🔤 OCR แม่นยำ</span>
+            <span class="pill">🤖 จัดหมวดหมู่ด้วย AI</span>
+            <span class="pill">🧾 รองรับ PDF</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    uploaded_file = st.file_uploader("", type=["jpg", "jpeg", "png", "pdf"],
+                                     key="uploader_widget", label_visibility="collapsed")
 
     if uploaded_file is not None:
         file_bytes = uploaded_file.read()
@@ -259,7 +450,7 @@ if st.session_state["app_phase"] == "UPLOAD":
         with st.spinner("⏳ กำลังวิเคราะห์และหาขอบเอกสาร..."):
             img = load_image_or_pdf(file_bytes, file_name)
             if img is None:
-                st.error("❌ Unsupported file")
+                st.error("❌ ไม่รองรับไฟล์ประเภทนี้")
                 st.stop()
 
             pts = detect_document_corners(img)
@@ -275,7 +466,6 @@ elif st.session_state["app_phase"] == "CROP":
     orig_img = st.session_state["orig_img"]
     pts = st.session_state["detected_pts"]
 
-    # st_cropper returns None until the user confirms
     final_pts = st_cropper(orig_img, pts, key="cropper")
 
     if final_pts is not None:
@@ -292,8 +482,8 @@ elif st.session_state["app_phase"] == "CROP":
             st.session_state["raw_text"] = raw_text
 
         if "[ERROR]" in raw_text or not raw_text.strip():
-            st.error("❌ OCR failed")
-            if st.button("ลองใหม่"):
+            st.error("❌ OCR ล้มเหลว กรุณาลองใหม่")
+            if st.button("🔄 ลองใหม่"):
                 reset_app()
                 st.rerun()
         else:
@@ -313,6 +503,22 @@ elif st.session_state["app_phase"] == "RESULT":
 
     has_error = (isinstance(extracted_json, dict) and "error" in extracted_json and extracted_json["error"])
 
+    # Header on result page too
+    st.markdown("""
+    <div class="app-header">
+        <div class="app-logo">
+            <div class="app-logo-icon">📄</div>
+            <div>
+                <div class="app-logo-text">RecAipt</div>
+                <div class="app-logo-sub">OCR Document Categorizer</div>
+            </div>
+        </div>
+        <div class="header-badge">✅ สแกนเสร็จสมบูรณ์</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
     col_left, col_right = st.columns([1, 1], gap="large")
 
     with col_left:
@@ -322,8 +528,7 @@ elif st.session_state["app_phase"] == "RESULT":
         st.image(display_img, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # Back button — native Streamlit (no iframe, no blank white box)
-        if st.button("← กลับ", key="back_btn", type="secondary"):
+        if st.button("← กลับหน้าหลัก", key="back_btn", type="secondary"):
             reset_app()
             st.rerun()
 
@@ -332,5 +537,18 @@ elif st.session_state["app_phase"] == "RESULT":
             st.error(f"❌ {extracted_json['error']}")
         else:
             items_count = len(extracted_json.get("items", []) or [])
-            card_height = 300 + (items_count * 40) + 100
+            # Calculate height precisely:
+            # card padding top/bottom: 24+20 = 44
+            # title: ~35
+            # badge: ~30
+            # 3 info rows: 3 * 38 = 114
+            # divider x2: 2 * (14+14+1) = 58
+            # section label: 28
+            # table header: 30
+            # table rows: items_count * 42
+            # totals section: 52 + (12 if subtotal) + (12 if vat) + padding
+            subtotal_val = safe_float(extracted_json.get("amount_before_tax", extracted_json.get("subtotal", 0)))
+            vat_val = safe_float(extracted_json.get("vat_amount", extracted_json.get("vat", 0)))
+            totals_h = 52 + (18 if subtotal_val else 0) + (18 if vat_val else 0)
+            card_height = 44 + 35 + 30 + 114 + 58 + 28 + 30 + max(1, items_count) * 42 + totals_h + 24
             components.html(build_detail_card_html(extracted_json), height=card_height, scrolling=False)
